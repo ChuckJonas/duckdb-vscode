@@ -1,6 +1,10 @@
 # 🦆 DuckDB for VS Code
 
-> An unofficial DuckDB extension for Visual Studio Code. Query CSV, Parquet, and JSON files directly. Connect to S3, Postgres, Google Sheets and more. No server required.
+> An unofficial DuckDB extension for Visual Studio Code. Query CSV, Parquet and JSON files directly. Connect to `.duckdb`, S3, Postgres, Google Sheets and more.
+
+![Query CSV files directly](resources/query-csv.gif)
+
+![Database Explorer](resources/database-explorer.gif)
 
 ## Overview
 
@@ -8,7 +12,7 @@ This extension brings DuckDB directly into VS Code with a focus on creating a pr
 
 ### How It Works
 
-All queries execute using the DuckDB Node API embedded in VS Code. By default, queries run against an in-memory database that resets when VS Code closes. You can attach persistent `.duckdb` files or connect to remote sources like Postgres, S3, or Google Sheets.
+All queries execute using the [DuckDB Node API](https://www.npmjs.com/package/@duckdb/node-api) embedded in VS Code. By default, queries run against an in-memory database that resets when VS Code closes. You can attach persistent `.duckdb` files or connect to remote sources like Postgres, S3, or Google Sheets.
 
 ## Features
 
@@ -19,36 +23,36 @@ All queries execute using the DuckDB Node API embedded in VS Code. By default, q
 - **SQL autocomplete** — Table names, columns, functions, and keywords (experimental, off by default)
 - **Inline error diagnostics** — Syntax errors shown directly in the editor
 
+### File Integration
+
+- **Right-click to query** — Select files in Explorer → "DuckDB: Query File". CSV, Parquet, JSON, JSONL, TSV supported.
+- **Summarize files** — Quick data profiling with SUMMARIZE
+
 ### Results Table
 
-- **Server-side pagination** — Handle millions of rows efficiently
-- **Column sorting** — Click headers to sort ASC/DESC
-- **Column filtering** — Filter by values, ranges, or patterns
+- **Server-side pagination** — Handle millions of rows efficiently via cached temp tables
+- **Quick Column sorting** — Click headers to sort ASC/DESC
+- **Quick Column filtering** — Filter by values, ranges, or patterns
 - **Cell selection** — Click, Shift+click for ranges, copy to clipboard
 - **Cell expansion** — Double-click to view full values (JSON syntax highlighted)
 - **Export options** — CSV, Parquet, JSON, JSONL, or open in new tab
-- **Go to source** — Button in results tab to jump back to SQL file
 
 ### Column Statistics
 
-- **Distribution histograms** — Visual distribution for numeric columns
 - **Top values** — Most frequent values for string columns
 - **Descriptive stats** — Min, max, mean, percentiles, null counts
-- **Interactive highlights** — Hover stats to highlight on histogram
+- **Distribution histograms** — Visual distribution for numeric columns
 
 ### Database Explorer
 
-- **Multiple databases** — Create, attach, and switch between databases
+- **Manage databases** — Create, attach, and switch between databases
 - **Status bar selector** — Quick database switching
-- **Auto-attach on startup** — Configured databases restore automatically
 - **Schema browser** — Databases → Schemas → Tables/Views → Columns
-- **Row counts** — Table sizes at a glance
-- **Quick actions** — SELECT TOP 100, DESCRIBE, SUMMARIZE, View Definition, Drop
+- **Quick actions** — SELECT TOP 100, DESCRIBE, SUMMARIZE, View Definition, Drop Table
 
 ### Extensions
 
-- **View loaded extensions** — See what's installed
-- **Add/remove extensions** — httpfs, parquet, json, postgres, spatial, etc.
+- **Managed extensions** — View, add, and remove extensions
 - **Auto-load on startup** — Configured extensions load automatically
 
 ### Query History
@@ -57,12 +61,6 @@ All queries execute using the DuckDB Node API embedded in VS Code. By default, q
 - **Re-run queries** — Click to execute again
 - **Open in editor** — Edit and modify past queries
 - **Optional persistence** — Save to `.vscode/duckdb-history.db`
-
-### File Integration
-
-- **Right-click to query** — Select files in Explorer → "DuckDB: Query File"
-- **Summarize files** — Quick data profiling with SUMMARIZE
-- **Supported formats** — CSV, Parquet, JSON, JSONL, TSV, XLSX
 
 ---
 

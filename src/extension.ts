@@ -13,6 +13,7 @@ import {
   showResultsPanel,
   disposeAllPanels,
   getActiveResultsSourceUri,
+  getActiveResultsQueries,
 } from "./services/webviewService";
 import {
   DatabaseExplorer,
@@ -26,7 +27,10 @@ import {
   ExtensionNode,
 } from "./explorer/ExtensionsExplorer";
 import { getHistoryService } from "./services/historyService";
-import { registerSqlCodeLens } from "./providers/SqlCodeLensProvider";
+import {
+  registerSqlCodeLens,
+  setGetCurrentDatabase,
+} from "./providers/SqlCodeLensProvider";
 import {
   switchDatabase,
   detachDatabase,
@@ -66,6 +70,7 @@ import {
 // Current database state
 let currentDatabase = "memory";
 let statusBarItem: vscode.StatusBarItem;
+let codeLensProvider: { refresh(): void } | undefined;
 
 // Diagnostic collection for SQL errors
 let diagnosticCollection: vscode.DiagnosticCollection;
@@ -1411,7 +1416,8 @@ export async function activate(context: vscode.ExtensionContext) {
   );
 
   // Register SQL CodeLens provider for run actions
-  registerSqlCodeLens(context);
+  setGetCurrentDatabase(() => currentDatabase);
+  codeLensProvider = registerSqlCodeLens(context);
 
   // Register "Go to Source" command for results panel
   const goToSourceCmd = vscode.commands.registerCommand(
@@ -1442,9 +1448,20 @@ export async function activate(context: vscode.ExtensionContext) {
           );
         }
       } else {
-        vscode.window.showInformationMessage(
-          "No source file associated with this results panel",
-        );
+        // No source file - create a new untitled document with the SQL
+        const queries = getActiveResultsQueries();
+        if (queries.length > 0) {
+          const sql = queries.join(";\n\n") + ";";
+          const doc = await vscode.workspace.openTextDocument({
+            language: "sql",
+            content: sql,
+          });
+          await vscode.window.showTextDocument(doc, { preserveFocus: false });
+        } else {
+          vscode.window.showInformationMessage(
+            "No source file associated with this results panel",
+          );
+        }
       }
     },
   );
@@ -1792,6 +1809,9 @@ function updateStatusBar() {
     currentDatabase === "memory" ? ":memory:" : currentDatabase;
   statusBarItem.text = `$(database) ${displayName}`;
   statusBarItem.tooltip = `DuckDB: ${displayName}\nClick to switch database`;
+
+  // Also refresh CodeLens to show updated database
+  codeLensProvider?.refresh();
 }
 
 interface DatabasePickItem extends vscode.QuickPickItem {

@@ -14,12 +14,14 @@ interface PanelState {
   sortColumn?: string;
   sortDirection?: "asc" | "desc";
   sourceUri?: vscode.Uri; // URI of the source document for "Go to Source"
+  queries: string[]; // SQL queries for creating new editor when no source
 }
 
 const resultPanels = new Map<string, PanelState>();
 
 // Track the currently active results panel for "Go to Source" command
 let activeResultsSourceUri: vscode.Uri | undefined;
+let activeResultsQueries: string[] = [];
 
 // ============================================================================
 // Public API
@@ -27,9 +29,17 @@ let activeResultsSourceUri: vscode.Uri | undefined;
 
 /**
  * Parse sourceId into a URI if possible
+ * Returns undefined for non-file sourceIds (e.g., explorer-*, history-*)
  */
 function parseSourceUri(sourceId: string | undefined): vscode.Uri | undefined {
   if (!sourceId) return undefined;
+
+  // Only parse as URI if it looks like a file URI
+  // Skip explorer-, history-, and other prefixed IDs
+  if (!sourceId.startsWith("file://")) {
+    return undefined;
+  }
+
   try {
     // sourceId can be a full URI string like "file:///path/to/file.sql"
     // or a prefixed string like "file:///path/to/file.sql:statement:123"
@@ -69,8 +79,9 @@ export function showResultsPanel(
       db,
     )
   ) {
-    // Update the active source URI when reusing panel
+    // Update the active source URI and queries when reusing panel
     activeResultsSourceUri = sourceUri;
+    activeResultsQueries = result.statements.map((s) => s.meta.sql);
     return;
   }
 
@@ -78,15 +89,17 @@ export function showResultsPanel(
   const panel = createWebviewPanel(context, title);
   const state = createPanelState(panel, cacheIds, result, sourceUri);
 
-  // Track active source URI when panel becomes active
+  // Track active source URI and queries when panel becomes active
   panel.onDidChangeViewState((e) => {
     if (e.webviewPanel.active) {
       activeResultsSourceUri = state.sourceUri;
+      activeResultsQueries = state.queries;
     }
   });
 
-  // Set initial active source
+  // Set initial active source and queries
   activeResultsSourceUri = sourceUri;
+  activeResultsQueries = state.queries;
 
   // Track panel if we have a sourceId
   if (sourceId) {
@@ -138,6 +151,14 @@ export function getPanelState(sourceId: string): PanelState | undefined {
  */
 export function getActiveResultsSourceUri(): vscode.Uri | undefined {
   return activeResultsSourceUri;
+}
+
+/**
+ * Get the SQL queries of the currently active results panel
+ * Used to create a new editor when there's no source file
+ */
+export function getActiveResultsQueries(): string[] {
+  return activeResultsQueries;
 }
 
 // ============================================================================
@@ -265,11 +286,15 @@ function createPanelState(
   result: MultiQueryResultWithPages,
   sourceUri?: vscode.Uri,
 ): PanelState {
+  // Extract SQL queries from result statements
+  const queries = result.statements.map((s) => s.meta.sql);
+
   return {
     panel,
     cacheIds,
     currentResult: result,
     sourceUri,
+    queries,
   };
 }
 

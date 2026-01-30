@@ -89,9 +89,12 @@ export function ResultsTable({
   const exportMenuRef = useRef<HTMLDivElement>(null);
   const openMenuRef = useRef<HTMLDivElement>(null);
   
-  // Columns panel
+  // Columns panel - default to 35% of window width, min 320, max 800
   const [showColumnsPanel, setShowColumnsPanel] = useState(false);
-  const [columnsPanelWidth, setColumnsPanelWidth] = useState(320);
+  const [columnsPanelWidth, setColumnsPanelWidth] = useState(() => {
+    const maxWidth = Math.min(800, Math.floor(window.innerWidth * 0.5));
+    return Math.max(320, Math.min(maxWidth, Math.floor(window.innerWidth * 0.35)));
+  });
   const [initialExpandedColumn, setInitialExpandedColumn] = useState<string | null>(null);
   const [columnStatsMap, setColumnStatsMap] = useState<Record<string, ColumnStats | null>>({});
   const [loadingStatsColumn, setLoadingStatsColumn] = useState<string | null>(null);

@@ -177,7 +177,9 @@ export function ColumnsPanel({
   const handleMouseMove = useCallback((e: MouseEvent) => {
     if (!isResizing) return;
     const delta = startXRef.current - e.clientX;
-    const newWidth = Math.max(200, Math.min(600, startWidthRef.current + delta));
+    // Min 280, max 50% of window width (capped at 800)
+    const maxWidth = Math.min(800, Math.floor(window.innerWidth * 0.5));
+    const newWidth = Math.max(280, Math.min(maxWidth, startWidthRef.current + delta));
     onResize(newWidth);
   }, [isResizing, onResize]);
 
