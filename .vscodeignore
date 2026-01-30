@@ -1,0 +1,23 @@
+.vscode/**
+.vscode-test/**
+.github/**
+src/**
+docs/**
+transcript/**
+.gitignore
+.yarnrc
+vsc-extension-quickstart.md
+**/tsconfig.json
+**/eslint.config.mjs
+**/*.map
+**/*.ts
+**/.vscode-test.*
+esbuild.js
+clean-markdown.js
+test_histogram.csv
+TODO.md
+Bug Fixes.md
+
+# Exclude node_modules except @duckdb (native bindings needed at runtime)
+node_modules/**
+!node_modules/@duckdb/**

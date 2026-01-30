@@ -1,0 +1,636 @@
+{
+  "name": "duckdb",
+  "displayName": "DuckDB",
+  "description": "A DuckDB client for VS Code",
+  "version": "0.0.1",
+  "publisher": "duckdb-ext",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/ChuckJonas/duckdb-vscode.git"
+  },
+  "license": "MIT",
+  "engines": {
+    "vscode": "^1.74.0"
+  },
+  "categories": [
+    "Programming Languages",
+    "Other"
+  ],
+  "activationEvents": [
+    "onStartupFinished",
+    "onView:duckdb.databaseExplorer"
+  ],
+  "main": "./out/extension.js",
+  "contributes": {
+    "viewsContainers": {
+      "activitybar": [
+        {
+          "id": "duckdb-explorer",
+          "title": "DuckDB",
+          "icon": "resources/duckdb-icon.svg"
+        }
+      ]
+    },
+    "views": {
+      "duckdb-explorer": [
+        {
+          "id": "duckdb.databaseExplorer",
+          "name": "Databases"
+        },
+        {
+          "id": "duckdb.queryHistory",
+          "name": "History"
+        },
+        {
+          "id": "duckdb.extensions",
+          "name": "Extensions",
+          "visibility": "collapsed"
+        }
+      ]
+    },
+    "commands": [
+      {
+        "command": "duckdb.executeQuery",
+        "title": "DuckDB: Execute Query",
+        "icon": "$(play)"
+      },
+      {
+        "command": "duckdb.runStatement",
+        "title": "DuckDB: Run Statement",
+        "icon": "$(play)"
+      },
+      {
+        "command": "duckdb.selectDatabase",
+        "title": "DuckDB: Select Database"
+      },
+      {
+        "command": "duckdb.manageExtensions",
+        "title": "DuckDB: Manage Extensions"
+      },
+      {
+        "command": "duckdb.queryFile",
+        "title": "DuckDB: Query File"
+      },
+      {
+        "command": "duckdb.copyQuery",
+        "title": "DuckDB: Copy Query"
+      },
+      {
+        "command": "duckdb.summarizeFile",
+        "title": "DuckDB: Summarize File"
+      },
+      {
+        "command": "duckdb.explorer.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "duckdb.explorer.selectTop100",
+        "title": "Select Top 100"
+      },
+      {
+        "command": "duckdb.explorer.describe",
+        "title": "Describe"
+      },
+      {
+        "command": "duckdb.explorer.summarize",
+        "title": "Summarize"
+      },
+      {
+        "command": "duckdb.explorer.viewDefinition",
+        "title": "View Definition"
+      },
+      {
+        "command": "duckdb.explorer.copyName",
+        "title": "Copy Name"
+      },
+      {
+        "command": "duckdb.explorer.selectColumn",
+        "title": "Select Column"
+      },
+      {
+        "command": "duckdb.explorer.drop",
+        "title": "Drop..."
+      },
+      {
+        "command": "duckdb.explorer.useDatabase",
+        "title": "Use Database"
+      },
+      {
+        "command": "duckdb.explorer.attachDatabase",
+        "title": "Attach Database...",
+        "icon": "$(add)"
+      },
+      {
+        "command": "duckdb.explorer.detachDatabase",
+        "title": "Detach Database"
+      },
+      {
+        "command": "duckdb.explorer.reattachDatabase",
+        "title": "Attach Database"
+      },
+      {
+        "command": "duckdb.explorer.forgetDatabase",
+        "title": "Forget Database"
+      },
+      {
+        "command": "duckdb.explorer.newSchema",
+        "title": "New Schema..."
+      },
+      {
+        "command": "duckdb.explorer.newTable",
+        "title": "New Table..."
+      },
+      {
+        "command": "duckdb.explorer.newView",
+        "title": "New View..."
+      },
+      {
+        "command": "duckdb.history.runAgain",
+        "title": "Run Again",
+        "icon": "$(play)"
+      },
+      {
+        "command": "duckdb.history.openInEditor",
+        "title": "Open in Editor",
+        "icon": "$(go-to-file)"
+      },
+      {
+        "command": "duckdb.history.copySql",
+        "title": "Copy SQL",
+        "icon": "$(copy)"
+      },
+      {
+        "command": "duckdb.history.delete",
+        "title": "Delete"
+      },
+      {
+        "command": "duckdb.history.clearAll",
+        "title": "Clear All History",
+        "icon": "$(trash)"
+      },
+      {
+        "command": "duckdb.history.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "duckdb.extensions.add",
+        "title": "Add Extension...",
+        "icon": "$(add)"
+      },
+      {
+        "command": "duckdb.extensions.refresh",
+        "title": "Refresh",
+        "icon": "$(refresh)"
+      },
+      {
+        "command": "duckdb.extensions.unload",
+        "title": "Remove from Auto-load"
+      },
+      {
+        "command": "duckdb.results.goToSource",
+        "title": "Go to Source File",
+        "icon": "$(go-to-file)"
+      }
+    ],
+    "menus": {
+      "editor/title": [
+        {
+          "command": "duckdb.results.goToSource",
+          "group": "navigation",
+          "when": "activeWebviewPanelId == 'duckdbResults'"
+        }
+      ],
+      "view/title": [
+        {
+          "command": "duckdb.explorer.attachDatabase",
+          "when": "view == duckdb.databaseExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "duckdb.explorer.refresh",
+          "when": "view == duckdb.databaseExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "duckdb.history.clearAll",
+          "when": "view == duckdb.queryHistory",
+          "group": "navigation"
+        },
+        {
+          "command": "duckdb.history.refresh",
+          "when": "view == duckdb.queryHistory",
+          "group": "navigation"
+        },
+        {
+          "command": "duckdb.extensions.add",
+          "when": "view == duckdb.extensions",
+          "group": "navigation"
+        },
+        {
+          "command": "duckdb.extensions.refresh",
+          "when": "view == duckdb.extensions",
+          "group": "navigation"
+        }
+      ],
+      "view/item/context": [
+        {
+          "command": "duckdb.explorer.useDatabase",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^database-attached/",
+          "group": "0_db@1"
+        },
+        {
+          "command": "duckdb.explorer.newSchema",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^database-attached/",
+          "group": "0_db@2"
+        },
+        {
+          "command": "duckdb.explorer.detachDatabase",
+          "when": "view == duckdb.databaseExplorer && viewItem == database-attached-configured",
+          "group": "0_db@3"
+        },
+        {
+          "command": "duckdb.explorer.reattachDatabase",
+          "when": "view == duckdb.databaseExplorer && viewItem == database-detached",
+          "group": "0_db@1"
+        },
+        {
+          "command": "duckdb.explorer.forgetDatabase",
+          "when": "view == duckdb.databaseExplorer && viewItem == database-detached",
+          "group": "0_db@2"
+        },
+        {
+          "command": "duckdb.explorer.newTable",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^(schema|tables-folder)$/",
+          "group": "0_new@1"
+        },
+        {
+          "command": "duckdb.explorer.newView",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^(schema|views-folder)$/",
+          "group": "0_new@1"
+        },
+        {
+          "command": "duckdb.explorer.selectTop100",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^(table|view)$/",
+          "group": "1_query@1"
+        },
+        {
+          "command": "duckdb.explorer.describe",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^(table|view)$/",
+          "group": "1_query@2"
+        },
+        {
+          "command": "duckdb.explorer.summarize",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^(table|view)$/",
+          "group": "1_query@3"
+        },
+        {
+          "command": "duckdb.explorer.viewDefinition",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^(table|view)$/",
+          "group": "1_query@4"
+        },
+        {
+          "command": "duckdb.explorer.copyName",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^(database-attached|database-detached|schema|table|view|column)$/",
+          "group": "2_copy@1"
+        },
+        {
+          "command": "duckdb.explorer.selectColumn",
+          "when": "view == duckdb.databaseExplorer && viewItem == column",
+          "group": "1_query@1"
+        },
+        {
+          "command": "duckdb.explorer.drop",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^(table|view)$/",
+          "group": "3_danger@1"
+        },
+        {
+          "command": "duckdb.extensions.unload",
+          "when": "view == duckdb.extensions && viewItem == extension",
+          "group": "1_ext@1"
+        },
+        {
+          "command": "duckdb.history.runAgain",
+          "when": "view == duckdb.queryHistory && viewItem == query",
+          "group": "1_run@1"
+        },
+        {
+          "command": "duckdb.history.openInEditor",
+          "when": "view == duckdb.queryHistory && viewItem == query",
+          "group": "1_run@2"
+        },
+        {
+          "command": "duckdb.history.copySql",
+          "when": "view == duckdb.queryHistory && viewItem == query",
+          "group": "2_copy@1"
+        },
+        {
+          "command": "duckdb.history.delete",
+          "when": "view == duckdb.queryHistory && viewItem == query",
+          "group": "3_danger@1"
+        }
+      ],
+      "explorer/context": [
+        {
+          "command": "duckdb.queryFile",
+          "when": "resourceExtname =~ /\\.(csv|parquet|json|jsonl|tsv|xlsx)$/i",
+          "group": "duckdb@1"
+        },
+        {
+          "command": "duckdb.copyQuery",
+          "when": "resourceExtname =~ /\\.(csv|parquet|json|jsonl|tsv|xlsx)$/i",
+          "group": "duckdb@2"
+        },
+        {
+          "command": "duckdb.summarizeFile",
+          "when": "resourceExtname =~ /\\.(csv|parquet|json|jsonl|tsv|xlsx)$/i",
+          "group": "duckdb@3"
+        }
+      ],
+      "commandPalette": [
+        {
+          "command": "duckdb.executeQuery",
+          "when": "editorLangId == sql"
+        },
+        {
+          "command": "duckdb.explorer.refresh",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.selectTop100",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.describe",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.summarize",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.viewDefinition",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.copyName",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.selectColumn",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.drop",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.useDatabase",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.attachDatabase",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.detachDatabase",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.reattachDatabase",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.forgetDatabase",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.newSchema",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.newTable",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.newView",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.history.runAgain",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.history.openInEditor",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.history.copySql",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.history.delete",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.history.clearAll",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.history.refresh",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.extensions.add",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.extensions.refresh",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.extensions.unload",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.runStatement",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.queryFile",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.copyQuery",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.summarizeFile",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.results.goToSource",
+          "when": "false"
+        }
+      ]
+    },
+    "keybindings": [
+      {
+        "command": "duckdb.executeQuery",
+        "key": "ctrl+enter",
+        "mac": "cmd+enter",
+        "when": "editorTextFocus && editorLangId == sql"
+      }
+    ],
+    "languages": [
+      {
+        "id": "sql",
+        "extensions": [
+          ".sql",
+          ".duckdb"
+        ],
+        "aliases": [
+          "SQL",
+          "DuckDB SQL"
+        ]
+      }
+    ],
+    "configuration": {
+      "title": "DuckDB",
+      "properties": {
+        "duckdb.databases": {
+          "type": "array",
+          "default": [],
+          "description": "Configured databases for this workspace",
+          "items": {
+            "type": "object",
+            "properties": {
+              "alias": {
+                "type": "string",
+                "description": "Database alias name"
+              },
+              "type": {
+                "type": "string",
+                "enum": [
+                  "memory",
+                  "file",
+                  "manual"
+                ],
+                "description": "Database type"
+              },
+              "path": {
+                "type": "string",
+                "description": "Path to .duckdb file (for type: file)"
+              },
+              "readOnly": {
+                "type": "boolean",
+                "default": false,
+                "description": "Open in read-only mode"
+              },
+              "sql": {
+                "type": "string",
+                "description": "Raw ATTACH SQL statement (for type: manual)"
+              },
+              "attached": {
+                "type": "boolean",
+                "default": true,
+                "description": "Attach on startup based on last state (managed by extension)"
+              }
+            },
+            "required": [
+              "alias",
+              "type"
+            ]
+          }
+        },
+        "duckdb.defaultDatabase": {
+          "type": "string",
+          "default": "memory",
+          "description": "Default database to USE after attaching"
+        },
+        "duckdb.extensions": {
+          "type": "array",
+          "default": [],
+          "description": "Extensions to auto-load on startup",
+          "items": {
+            "type": "string"
+          }
+        },
+        "duckdb.history.persist": {
+          "type": "boolean",
+          "default": false,
+          "description": "Persist query history to .vscode/duckdb-history.db (survives restarts)"
+        },
+        "duckdb.history.maxEntries": {
+          "type": "number",
+          "default": 1000,
+          "description": "Maximum number of history entries to keep"
+        },
+        "duckdb.pageSize": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 100,
+          "maximum": 10000,
+          "description": "Number of rows per page in results table"
+        },
+        "duckdb.maxCopyRows": {
+          "type": "number",
+          "default": 50000,
+          "minimum": 1000,
+          "maximum": 1000000,
+          "description": "Maximum rows for copy/export operations"
+        },
+        "duckdb.resultsLocation": {
+          "type": "string",
+          "enum": [
+            "beside",
+            "active"
+          ],
+          "default": "active",
+          "enumDescriptions": [
+            "Open results in a new editor group beside the current one",
+            "Open results in the same editor group as the SQL file"
+          ],
+          "description": "Where to open query results"
+        },
+        "duckdb.autocomplete.enabled": {
+          "type": "boolean",
+          "default": false,
+          "description": "Enable SQL autocomplete suggestions (experimental)"
+        }
+      }
+    }
+  },
+  "scripts": {
+    "vscode:prepublish": "npm run package",
+    "compile": "node esbuild.js",
+    "watch": "node esbuild.js --watch",
+    "package": "node esbuild.js --production",
+    "pretest": "npm run compile && npm run lint",
+    "lint": "eslint src",
+    "test": "vscode-test",
+    "deploy": "vsce publish"
+  },
+  "devDependencies": {
+    "@types/mocha": "^10.0.10",
+    "@types/node": "22.x",
+    "@types/react": "^19.2.9",
+    "@types/react-dom": "^19.2.3",
+    "@types/vscode": "^1.85.0",
+    "@vscode/test-cli": "^0.0.12",
+    "@vscode/test-electron": "^2.5.2",
+    "@vscode/vsce": "^3.7.1",
+    "esbuild": "^0.27.2",
+    "esbuild-plugin-copy": "^2.1.1",
+    "eslint": "^9.39.2",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.52.0"
+  },
+  "dependencies": {
+    "@duckdb/node-api": "^1.4.3-r.3",
+    "lucide-react": "^0.563.0",
+    "react": "^19.2.3",
+    "react-dom": "^19.2.3"
+  }
+}
