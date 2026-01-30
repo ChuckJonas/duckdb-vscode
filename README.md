@@ -2,9 +2,9 @@
 
 > An unofficial DuckDB extension for Visual Studio Code. Query CSV, Parquet and JSON files directly. Connect to `.duckdb`, S3, Postgres, Google Sheets and more.
 
-![Query CSV files directly](resources/query-csv.gif)
+![Query CSV files directly](https://raw.githubusercontent.com/ChuckJonas/duckdb-vscode/main/resources/query-csv.gif)
 
-![Database Explorer](resources/database-explorer.gif)
+![Database Explorer](https://raw.githubusercontent.com/ChuckJonas/duckdb-vscode/main/resources/database-explorer.gif)
 
 ## Overview
 
