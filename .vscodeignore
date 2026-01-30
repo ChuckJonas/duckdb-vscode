@@ -4,6 +4,7 @@
 src/**
 docs/**
 transcript/**
+scripts/**
 .gitignore
 .yarnrc
 vsc-extension-quickstart.md
@@ -17,6 +18,9 @@ clean-markdown.js
 test_histogram.csv
 TODO.md
 Bug Fixes.md
+
+# Exclude GIFs from bundle (Marketplace fetches from GitHub repo)
+resources/*.gif
 
 # Exclude node_modules except @duckdb (native bindings needed at runtime)
 node_modules/**
