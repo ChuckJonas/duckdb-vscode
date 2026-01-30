@@ -4,6 +4,16 @@ All notable changes to the "duckdb" extension will be documented in this file.
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.0.3] - 2026-01-30
+
+### Added
+- Demo GIFs in README showing CSV querying and database explorer
+- Script for converting screen recordings to optimized GIFs (`scripts/mov-to-gif.sh`)
+
+### Fixed
+- Multi-statement execution now correctly reuses same results panel per file
+- Column statistics display correctly when switching between statements
+
 ## [0.0.2] - 2026-01-29
 
 ### Added
