@@ -155,8 +155,8 @@ function buildPanelTitle(result: MultiQueryResultWithPages): string {
   const displayRowCount = lastStmt?.meta.totalRows || 0;
 
   return statementsWithResults.length > 1
-    ? `🦆 Results (${statementsWithResults.length} queries)`
-    : `🦆 Results (${displayRowCount.toLocaleString()} rows)`;
+    ? `Results (${statementsWithResults.length} queries)`
+    : `Results (${displayRowCount.toLocaleString()} rows)`;
 }
 
 /**
@@ -233,7 +233,7 @@ function createWebviewPanel(
   context: vscode.ExtensionContext,
   title: string,
 ): vscode.WebviewPanel {
-  return vscode.window.createWebviewPanel(
+  const panel = vscode.window.createWebviewPanel(
     "duckdbResults",
     title,
     getResultsViewColumn(),
@@ -245,6 +245,15 @@ function createWebviewPanel(
       ],
     },
   );
+
+  // Set custom tab icon
+  panel.iconPath = vscode.Uri.joinPath(
+    context.extensionUri,
+    "resources",
+    "duckdb-icon.svg",
+  );
+
+  return panel;
 }
 
 /**

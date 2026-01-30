@@ -177,10 +177,10 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.window.showErrorMessage(`Failed to initialize DuckDB: ${error}`);
   }
 
-  // Create status bar item
+  // Create status bar item (right side, low priority = far right)
   statusBarItem = vscode.window.createStatusBarItem(
-    vscode.StatusBarAlignment.Left,
-    100,
+    vscode.StatusBarAlignment.Right,
+    50,
   );
   statusBarItem.command = "duckdb.selectDatabase";
   updateStatusBar();
@@ -1790,7 +1790,7 @@ async function showExtensionsQuickPick(
 function updateStatusBar() {
   const displayName =
     currentDatabase === "memory" ? ":memory:" : currentDatabase;
-  statusBarItem.text = `🦆 ${displayName}`;
+  statusBarItem.text = `$(database) ${displayName}`;
   statusBarItem.tooltip = `DuckDB: ${displayName}\nClick to switch database`;
 }
 
