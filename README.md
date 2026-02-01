@@ -20,7 +20,7 @@ All queries execute using the [DuckDB Node API](https://www.npmjs.com/package/@d
 
 - **Execute queries** — `Cmd+Enter` (Mac) / `Ctrl+Enter` (Windows/Linux)
 - **Run individual statements** — CodeLens "Run" buttons above each SQL statement
-- **SQL autocomplete** — Table names, columns, functions, and keywords (experimental, off by default)
+- **SQL autocomplete** — Table names, columns, functions, and keywords.  Somewhat experimental, can be disabled in settings.
 - **Inline error diagnostics** — Syntax errors shown directly in the editor
 
 ### File Integration

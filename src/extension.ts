@@ -57,10 +57,7 @@ import {
   updateDatabaseReadOnlyState,
   getConfiguredDatabases,
 } from "./services/databaseManager";
-import {
-  getAutocompleteSuggestions,
-  inferCompletionKind,
-} from "./services/autocompleteService";
+import { getAutocompleteSuggestions } from "./services/autocompleteService";
 import {
   installAndLoadExtension,
   getLoadedExtensions as getLoadedExtensionsFromService,
@@ -770,6 +767,54 @@ export async function activate(context: vscode.ExtensionContext) {
     },
   );
 
+  // File listing function for autocomplete
+  async function listFilesForAutocomplete(
+    dirPath: string,
+  ): Promise<{ name: string; isDirectory: boolean }[]> {
+    try {
+      // Get workspace folder or document folder
+      const workspaceFolders = vscode.workspace.workspaceFolders;
+      let baseUri: vscode.Uri;
+
+      if (workspaceFolders && workspaceFolders.length > 0) {
+        baseUri = workspaceFolders[0].uri;
+      } else {
+        // No workspace, return empty
+        return [];
+      }
+
+      // Resolve the directory path
+      let targetUri: vscode.Uri;
+      if (dirPath === "." || dirPath === "") {
+        targetUri = baseUri;
+      } else if (dirPath.startsWith("/")) {
+        // Absolute path
+        targetUri = vscode.Uri.file(dirPath);
+      } else {
+        // Relative path
+        targetUri = vscode.Uri.joinPath(baseUri, dirPath);
+      }
+
+      const entries = await vscode.workspace.fs.readDirectory(targetUri);
+
+      return entries
+        .filter(([name]) => !name.startsWith(".")) // Hide dotfiles
+        .map(([name, type]) => ({
+          name,
+          isDirectory: type === vscode.FileType.Directory,
+        }))
+        .sort((a, b) => {
+          // Directories first, then alphabetical
+          if (a.isDirectory && !b.isDirectory) return -1;
+          if (!a.isDirectory && b.isDirectory) return 1;
+          return a.name.localeCompare(b.name);
+        });
+    } catch (error) {
+      console.error("🦆 Failed to list files:", error);
+      return [];
+    }
+  }
+
   // Register SQL autocomplete provider (behind experimental setting)
   const completionProvider = vscode.languages.registerCompletionItemProvider(
     "sql",
@@ -782,31 +827,53 @@ export async function activate(context: vscode.ExtensionContext) {
         }
 
         try {
-          const textUntilCursor = document.getText(
-            new vscode.Range(new vscode.Position(0, 0), position),
-          );
+          // Get full document text and cursor position
+          const fullText = document.getText();
+          const cursorPosition = document.offsetAt(position);
 
           const suggestions = await getAutocompleteSuggestions(
             (sql) => db.query(sql),
-            textUntilCursor,
+            fullText,
+            cursorPosition,
+            listFilesForAutocomplete,
           );
 
-          return suggestions.map(({ suggestion, suggestionStart }) => {
-            const item = new vscode.CompletionItem(suggestion);
+          return suggestions.map(
+            ({ suggestion, suggestionStart, kind, detail }) => {
+              const item = new vscode.CompletionItem(suggestion);
 
-            const kind = inferCompletionKind(suggestion);
-            item.kind =
-              kind === "keyword"
-                ? vscode.CompletionItemKind.Keyword
-                : kind === "function"
-                  ? vscode.CompletionItemKind.Function
-                  : vscode.CompletionItemKind.Field;
+              // Map our kind to VS Code's CompletionItemKind
+              switch (kind) {
+                case "keyword":
+                  item.kind = vscode.CompletionItemKind.Keyword;
+                  break;
+                case "function":
+                  item.kind = vscode.CompletionItemKind.Function;
+                  break;
+                case "table":
+                  item.kind = vscode.CompletionItemKind.Class;
+                  break;
+                case "column":
+                  item.kind = vscode.CompletionItemKind.Field;
+                  break;
+                case "file":
+                  item.kind = vscode.CompletionItemKind.File;
+                  break;
+                default:
+                  item.kind = vscode.CompletionItemKind.Text;
+              }
 
-            const startPos = document.positionAt(suggestionStart);
-            item.range = new vscode.Range(startPos, position);
+              // Add detail (e.g., data type for columns)
+              if (detail) {
+                item.detail = detail;
+              }
 
-            return item;
-          });
+              const startPos = document.positionAt(suggestionStart);
+              item.range = new vscode.Range(startPos, position);
+
+              return item;
+            },
+          );
         } catch (error) {
           console.error("🦆 Autocomplete error:", error);
           return [];
@@ -818,6 +885,9 @@ export async function activate(context: vscode.ExtensionContext) {
     "(",
     ",",
     "\n",
+    "'", // Trigger on opening quote for file paths
+    '"', // Trigger on opening quote for file paths
+    "/", // Trigger on slash for path navigation
   );
 
   // ============================================

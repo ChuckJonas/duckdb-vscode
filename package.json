@@ -2,7 +2,7 @@
   "name": "duckdb",
   "displayName": "DuckDB",
   "description": "A DuckDB client for VS Code",
-  "version": "0.0.6",
+  "version": "0.0.7",
   "publisher": "chuckjonas",
   "icon": "resources/icon.png",
   "repository": {
@@ -597,8 +597,8 @@
         },
         "duckdb.autocomplete.enabled": {
           "type": "boolean",
-          "default": false,
-          "description": "Enable SQL autocomplete suggestions (experimental)"
+          "default": true,
+          "description": "Enable SQL autocomplete suggestions"
         }
       }
     }
@@ -611,7 +611,7 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test",
-    "test:unit": "tsx --test src/test/splitSqlStatements.test.ts",
+    "test:unit": "node --import tsx --test ./src/test/*.test.ts",
     "deploy": "vsce publish"
   },
   "devDependencies": {
