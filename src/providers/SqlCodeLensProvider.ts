@@ -128,14 +128,8 @@ function parseSqlStatements(sql: string): ParsedStatement[] {
       continue;
     }
 
-    // Mark start of content
-    if (!hasContent) {
-      hasContent = true;
-      contentStartOffset = i;
-      contentStartLine = currentLine;
-    }
-
-    // Handle single-line comments
+    // Handle single-line comments BEFORE marking content start
+    // This ensures comment-only blocks don't count as statements
     if (char === "-" && sql[i + 1] === "-") {
       // Skip to end of line
       while (i < sql.length && sql[i] !== "\n") {
@@ -144,7 +138,7 @@ function parseSqlStatements(sql: string): ParsedStatement[] {
       continue;
     }
 
-    // Handle multi-line comments
+    // Handle multi-line comments BEFORE marking content start
     if (char === "/" && sql[i + 1] === "*") {
       i += 2;
       while (i < sql.length - 1) {
@@ -158,6 +152,13 @@ function parseSqlStatements(sql: string): ParsedStatement[] {
         i++;
       }
       continue;
+    }
+
+    // Mark start of content (after skipping whitespace and comments)
+    if (!hasContent) {
+      hasContent = true;
+      contentStartOffset = i;
+      contentStartLine = currentLine;
     }
 
     // Handle string literals (single quotes)

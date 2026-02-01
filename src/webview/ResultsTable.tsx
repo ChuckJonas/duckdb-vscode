@@ -123,8 +123,9 @@ export function ResultsTable({
   // Table wrapper ref
   const tableWrapperRef = useRef<HTMLDivElement>(null);
 
-  // Reset column stats state when switching statements (cacheId changes)
+  // Reset state when switching statements (cacheId changes)
   useEffect(() => {
+    // Reset column stats
     setColumnStatsMap({});
     setColumnSummaries([]);
     setSummariesLoaded(false);
@@ -132,6 +133,12 @@ export function ResultsTable({
     setStatsError(null);
     setShowColumnsPanel(false);
     setInitialExpandedColumn(null);
+    // Reset filters - old filters won't apply to new query columns
+    setFilterState(createInitialFilterState());
+    setFilteredRowCount(totalRows);
+    setDistinctValues([]);
+    setColumnCardinality(0);
+    setFilterPopover(null);
   }, [cacheId]);
 
   // Pagination helpers

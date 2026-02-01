@@ -70,8 +70,8 @@ jobs:
           name: vsix
           path: '*.vsix'
 
-  # Publish job only runs on version tags
-  publish:
+  # Publish to VS Code Marketplace (only on version tags)
+  publish-vscode:
     needs: package
     runs-on: ubuntu-latest
     if: startsWith(github.ref, 'refs/tags/v')
@@ -90,6 +90,22 @@ jobs:
         run: npx @vscode/vsce publish --packagePath *.vsix
         env:
           VSCE_PAT: ${{ secrets.VSCE_PAT }}
+
+  # Publish to Open VSX Registry (only on version tags)
+  publish-openvsx:
+    needs: package
+    runs-on: ubuntu-latest
+    if: startsWith(github.ref, 'refs/tags/v')
+    steps:
+      - name: Download VSIX artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: vsix
+
+      - name: Install Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 20.x
 
       - name: Publish to Open VSX Registry
         run: npx ovsx publish *.vsix -p ${{ secrets.OVSX_PAT }}

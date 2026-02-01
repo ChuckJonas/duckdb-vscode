@@ -2,7 +2,7 @@
   "name": "duckdb",
   "displayName": "DuckDB",
   "description": "A DuckDB client for VS Code",
-  "version": "0.0.5",
+  "version": "0.0.6",
   "publisher": "chuckjonas",
   "icon": "resources/icon.png",
   "repository": {
@@ -611,10 +611,12 @@
     "pretest": "npm run compile && npm run lint",
     "lint": "eslint src",
     "test": "vscode-test",
+    "test:unit": "tsx --test src/test/splitSqlStatements.test.ts",
     "deploy": "vsce publish"
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
+    "tsx": "^4.19.0",
     "@types/node": "22.x",
     "@types/react": "^19.2.9",
     "@types/react-dom": "^19.2.3",
