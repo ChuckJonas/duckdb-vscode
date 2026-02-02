@@ -1,5 +1,8 @@
 # 🦆 DuckDB for VS Code
 
+[![VS Code Marketplace](https://img.shields.io/visual-studio-marketplace/v/chuckjonas.duckdb?label=VS%20Code%20Marketplace)](https://marketplace.visualstudio.com/items?itemName=chuckjonas.duckdb)
+[![Open VSX](https://img.shields.io/open-vsx/v/chuckjonas/duckdb?label=Open%20VSX)](https://open-vsx.org/extension/chuckjonas/duckdb)
+
 > An unofficial DuckDB extension for Visual Studio Code. Query CSV, Parquet and JSON files directly. Connect to `.duckdb`, S3, Postgres, Google Sheets and more.
 
 ![Query CSV files directly](https://raw.githubusercontent.com/ChuckJonas/duckdb-vscode/main/resources/query-csv.gif)
@@ -13,6 +16,8 @@ This extension brings DuckDB directly into VS Code with a focus on creating a pr
 ### How It Works
 
 All queries execute using the [DuckDB Node API](https://www.npmjs.com/package/@duckdb/node-api) embedded in VS Code. By default, queries run against an in-memory database that resets when VS Code closes. You can attach persistent `.duckdb` files or connect to remote sources like Postgres, S3, or Google Sheets.
+
+Performance Note: When you execute a query, the extension will create a temporary table which is then used for pagination, sorting, filtering, and exporting.
 
 ## Features
 
