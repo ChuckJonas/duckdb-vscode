@@ -843,6 +843,7 @@ export async function activate(context: vscode.ExtensionContext) {
               const item = new vscode.CompletionItem(suggestion);
 
               // Map our kind to VS Code's CompletionItemKind
+              // See: https://code.visualstudio.com/docs/editing/intellisense#_types-of-completions
               switch (kind) {
                 case "keyword":
                   item.kind = vscode.CompletionItemKind.Keyword;
@@ -850,8 +851,17 @@ export async function activate(context: vscode.ExtensionContext) {
                 case "function":
                   item.kind = vscode.CompletionItemKind.Function;
                   break;
+                case "database":
+                  item.kind = vscode.CompletionItemKind.Event; // Stands out visually
+                  break;
+                case "schema":
+                  item.kind = vscode.CompletionItemKind.Module; // Namespace/container concept
+                  break;
                 case "table":
-                  item.kind = vscode.CompletionItemKind.Class;
+                  item.kind = vscode.CompletionItemKind.Class; // Structured data type
+                  break;
+                case "view":
+                  item.kind = vscode.CompletionItemKind.Interface; // Similar to table but virtual
                   break;
                 case "column":
                   item.kind = vscode.CompletionItemKind.Field;
@@ -870,6 +880,14 @@ export async function activate(context: vscode.ExtensionContext) {
 
               const startPos = document.positionAt(suggestionStart);
               item.range = new vscode.Range(startPos, position);
+
+              // Re-trigger suggestions after inserting database/schema (they end with .)
+              if (kind === "database" || kind === "schema") {
+                item.command = {
+                  command: "editor.action.triggerSuggest",
+                  title: "Re-trigger completions",
+                };
+              }
 
               return item;
             },

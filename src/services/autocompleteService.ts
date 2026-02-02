@@ -21,7 +21,15 @@ import {
 export interface AutocompleteSuggestion {
   suggestion: string;
   suggestionStart: number;
-  kind: "keyword" | "function" | "table" | "column" | "file";
+  kind:
+    | "keyword"
+    | "function"
+    | "table"
+    | "view"
+    | "column"
+    | "file"
+    | "database"
+    | "schema";
   detail?: string; // e.g., data type for columns
 }
 
@@ -312,6 +320,38 @@ function buildDescribeTarget(table: TableReference): string {
 // ============================================================================
 
 /**
+ * Parse a qualified prefix like "db." or "db.schema." into parts
+ */
+function parseQualifiedPrefix(prefix: string): {
+  database?: string;
+  schema?: string;
+  tablePrefix: string;
+  fullQualifier: string;
+} {
+  const parts = prefix.split(".");
+
+  if (parts.length === 1) {
+    // No dot - just a table prefix
+    return { tablePrefix: parts[0], fullQualifier: "" };
+  } else if (parts.length === 2) {
+    // "db." or "schema." - one qualifier
+    return {
+      database: parts[0],
+      tablePrefix: parts[1],
+      fullQualifier: parts[0] + ".",
+    };
+  } else {
+    // "db.schema." - two qualifiers
+    return {
+      database: parts[0],
+      schema: parts[1],
+      tablePrefix: parts.slice(2).join("."),
+      fullQualifier: parts[0] + "." + parts[1] + ".",
+    };
+  }
+}
+
+/**
  * Get table completions from information_schema and file paths
  */
 async function getTableCompletions(
@@ -366,10 +406,196 @@ async function getTableCompletions(
     return suggestions;
   }
 
-  // Not in quotes - provide tables and read_* functions
+  // Parse the prefix to check for qualified names (db.schema.table)
+  // Use fullQualifiedPrefix which includes the full "db.schema." part
+  const qualified = parseQualifiedPrefix(context.fullQualifiedPrefix);
+  const lowerTablePrefix = qualified.tablePrefix.toLowerCase();
+
+  // If we have a qualifier (could be database or schema)
+  if (qualified.database) {
+    try {
+      if (qualified.schema) {
+        // db.schema.table - show only tables from specific schema (no more qualifiers)
+        const tableRows = await queryFn(`
+          SELECT table_name, table_type
+          FROM information_schema.tables
+          WHERE table_catalog = '${qualified.database}'
+            AND table_schema = '${qualified.schema}'
+          ORDER BY table_name
+          LIMIT 100
+        `);
+
+        for (const row of tableRows) {
+          const tableName = row.table_name as string;
+          const tableType = row.table_type as string;
+
+          if (
+            !lowerTablePrefix ||
+            tableName.toLowerCase().startsWith(lowerTablePrefix)
+          ) {
+            suggestions.push({
+              suggestion: qualified.fullQualifier + tableName,
+              suggestionStart:
+                cursorPosition - context.fullQualifiedPrefix.length,
+              kind: tableType === "VIEW" ? "view" : "table",
+              detail: tableType === "VIEW" ? "view" : "table",
+            });
+          }
+        }
+      } else {
+        // Single qualifier: could be "database." or "schema." in current database
+        // Try BOTH interpretations and merge results
+
+        // 1. Try as database: get schemas and tables from that database
+        const dbSchemaRows = await queryFn(`
+          SELECT DISTINCT schema_name
+          FROM information_schema.schemata
+          WHERE catalog_name = '${qualified.database}'
+            AND schema_name NOT IN ('pg_catalog', 'information_schema')
+          ORDER BY schema_name
+          LIMIT 50
+        `);
+
+        for (const row of dbSchemaRows) {
+          const schemaName = row.schema_name as string;
+          // Skip if schema name equals the qualifier (prevents db.db.)
+          if (schemaName.toLowerCase() === qualified.database.toLowerCase()) {
+            continue;
+          }
+          if (
+            !lowerTablePrefix ||
+            schemaName.toLowerCase().startsWith(lowerTablePrefix)
+          ) {
+            suggestions.push({
+              suggestion: qualified.fullQualifier + schemaName + ".",
+              suggestionStart:
+                cursorPosition - context.fullQualifiedPrefix.length,
+              kind: "schema",
+              detail: "schema",
+            });
+          }
+        }
+
+        // Get tables from database (treating qualifier as database name)
+        const dbTableRows = await queryFn(`
+          SELECT table_name, table_type
+          FROM information_schema.tables
+          WHERE table_catalog = '${qualified.database}'
+            AND table_schema NOT IN ('pg_catalog', 'information_schema')
+          ORDER BY table_name
+          LIMIT 100
+        `);
+
+        for (const row of dbTableRows) {
+          const tableName = row.table_name as string;
+          const tableType = row.table_type as string;
+
+          if (
+            !lowerTablePrefix ||
+            tableName.toLowerCase().startsWith(lowerTablePrefix)
+          ) {
+            suggestions.push({
+              suggestion: qualified.fullQualifier + tableName,
+              suggestionStart:
+                cursorPosition - context.fullQualifiedPrefix.length,
+              kind: tableType === "VIEW" ? "view" : "table",
+              detail: tableType === "VIEW" ? "view" : "table",
+            });
+          }
+        }
+
+        // 2. Also try as schema in current database
+        const schemaTableRows = await queryFn(`
+          SELECT table_name, table_type
+          FROM information_schema.tables
+          WHERE table_schema = '${qualified.database}'
+            AND table_schema NOT IN ('pg_catalog', 'information_schema')
+          ORDER BY table_name
+          LIMIT 100
+        `);
+
+        for (const row of schemaTableRows) {
+          const tableName = row.table_name as string;
+          const tableType = row.table_type as string;
+
+          // Avoid duplicates
+          const fullSuggestion = qualified.fullQualifier + tableName;
+          if (suggestions.some((s) => s.suggestion === fullSuggestion)) {
+            continue;
+          }
+
+          if (
+            !lowerTablePrefix ||
+            tableName.toLowerCase().startsWith(lowerTablePrefix)
+          ) {
+            suggestions.push({
+              suggestion: fullSuggestion,
+              suggestionStart:
+                cursorPosition - context.fullQualifiedPrefix.length,
+              kind: tableType === "VIEW" ? "view" : "table",
+              detail: tableType === "VIEW" ? "view" : "table",
+            });
+          }
+        }
+      }
+    } catch (error) {
+      console.error("🦆 Failed to get qualified tables:", error);
+    }
+
+    return suggestions;
+  }
+
+  // No qualifier - show databases, schemas, and tables from current context
   try {
-    // Get tables from information_schema
-    const rows = await queryFn(`
+    // Get attached databases
+    const dbRows = await queryFn(`
+      SELECT database_name
+      FROM duckdb_databases()
+      WHERE database_name != 'system'
+      ORDER BY database_name
+    `);
+
+    for (const row of dbRows) {
+      const dbName = row.database_name as string;
+      if (
+        !lowerTablePrefix ||
+        dbName.toLowerCase().startsWith(lowerTablePrefix)
+      ) {
+        suggestions.push({
+          suggestion: dbName + ".",
+          suggestionStart: cursorPosition - context.prefix.length,
+          kind: "database",
+          detail: "database",
+        });
+      }
+    }
+
+    // Get schemas in the current database (excluding system schemas)
+    const schemaRows = await queryFn(`
+      SELECT DISTINCT schema_name
+      FROM information_schema.schemata
+      WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'main')
+      ORDER BY schema_name
+      LIMIT 50
+    `);
+
+    for (const row of schemaRows) {
+      const schemaName = row.schema_name as string;
+      if (
+        !lowerTablePrefix ||
+        schemaName.toLowerCase().startsWith(lowerTablePrefix)
+      ) {
+        suggestions.push({
+          suggestion: schemaName + ".",
+          suggestionStart: cursorPosition - context.prefix.length,
+          kind: "schema",
+          detail: "schema",
+        });
+      }
+    }
+
+    // Get tables from current schema
+    const tableRows = await queryFn(`
       SELECT table_name, table_type
       FROM information_schema.tables
       WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
@@ -377,16 +603,21 @@ async function getTableCompletions(
       LIMIT 100
     `);
 
-    for (const row of rows) {
+    for (const row of tableRows) {
       const tableName = row.table_name as string;
       const tableType = row.table_type as string;
 
-      suggestions.push({
-        suggestion: tableName,
-        suggestionStart: cursorPosition - context.prefix.length,
-        kind: "table",
-        detail: tableType === "VIEW" ? "view" : "table",
-      });
+      if (
+        !lowerTablePrefix ||
+        tableName.toLowerCase().startsWith(lowerTablePrefix)
+      ) {
+        suggestions.push({
+          suggestion: tableName,
+          suggestionStart: cursorPosition - context.prefix.length,
+          kind: tableType === "VIEW" ? "view" : "table",
+          detail: tableType === "VIEW" ? "view" : "table",
+        });
+      }
     }
   } catch (error) {
     console.error("🦆 Failed to get tables:", error);
@@ -399,10 +630,11 @@ async function getTableCompletions(
     { name: "read_json", detail: "Read JSON file" },
   ];
 
-  const prefix = context.prefix.toLowerCase();
   for (const fn of fileFunctions) {
-    // Show if prefix matches or is empty
-    if (!prefix || fn.name.toLowerCase().startsWith(prefix)) {
+    if (
+      !lowerTablePrefix ||
+      fn.name.toLowerCase().startsWith(lowerTablePrefix)
+    ) {
       suggestions.push({
         suggestion: fn.name + "('')",
         suggestionStart: cursorPosition - context.prefix.length,

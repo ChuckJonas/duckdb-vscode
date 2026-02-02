@@ -260,6 +260,58 @@ describe("Autocomplete Service Integration", () => {
         "Should also suggest read_csv",
       );
     });
+
+    it("suggests attached databases in FROM clause", async () => {
+      const sql = "SELECT * FROM |";
+      const cursor = sql.indexOf("|");
+      const cleanSql = sql.replace("|", "");
+
+      const suggestions = await getAutocompleteSuggestions(
+        queryFn,
+        cleanSql,
+        cursor,
+      );
+
+      // Should suggest the 'memory' database (default in-memory db)
+      const dbNames = suggestions
+        .filter((s) => s.detail === "database")
+        .map((s) => s.suggestion);
+
+      assert.ok(
+        dbNames.some((d) => d.endsWith(".")),
+        "Database suggestions should end with dot",
+      );
+    });
+
+    it("suggests tables when typing database prefix", async () => {
+      // Create a schema with a table for testing
+      await queryFn("CREATE SCHEMA IF NOT EXISTS test_schema");
+      await queryFn(
+        "CREATE TABLE IF NOT EXISTS test_schema.schema_table (id INTEGER)",
+      );
+
+      const sql = "SELECT * FROM test_schema.|";
+      const cursor = sql.indexOf("|");
+      const cleanSql = sql.replace("|", "");
+
+      const suggestions = await getAutocompleteSuggestions(
+        queryFn,
+        cleanSql,
+        cursor,
+      );
+
+      const tableNames = suggestions.map((s) => s.suggestion);
+
+      // Should suggest schema_table with the full qualifier
+      assert.ok(
+        tableNames.some((t) => t.includes("schema_table")),
+        "Should suggest tables from the schema",
+      );
+
+      // Cleanup
+      await queryFn("DROP TABLE IF EXISTS test_schema.schema_table");
+      await queryFn("DROP SCHEMA IF EXISTS test_schema");
+    });
   });
 
   describe("CSV File Completions", () => {

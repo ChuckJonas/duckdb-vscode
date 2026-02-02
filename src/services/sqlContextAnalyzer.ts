@@ -58,6 +58,8 @@ export interface SQLContext {
   isAfterDot: boolean;
   /** The identifier before the dot (e.g., "u" in "u.name") */
   dotPrefix?: string;
+  /** Full qualified prefix including dots (e.g., "db.schema." or "db.schema.tab") */
+  fullQualifiedPrefix: string;
   /** Quote context for file path completions */
   quoteContext?: {
     /** True if cursor is inside a quoted string */
@@ -112,6 +114,7 @@ export function analyzeSQLContext(
     ctes: [],
     prefix: "",
     isAfterDot: false,
+    fullQualifiedPrefix: "",
   };
 
   if (!sql || sql.trim().length === 0) {
@@ -129,7 +132,7 @@ export function analyzeSQLContext(
   const localCursor = cursorPosition - statement.start;
 
   // Step 4: Extract prefix (partial word at cursor)
-  const { prefix, isAfterDot, dotPrefix } = extractPrefix(
+  const { prefix, isAfterDot, dotPrefix, fullQualifiedPrefix } = extractPrefix(
     statement.text,
     localCursor,
   );
@@ -150,6 +153,7 @@ export function analyzeSQLContext(
     prefix,
     isAfterDot,
     dotPrefix,
+    fullQualifiedPrefix,
     quoteContext,
   };
 }
@@ -501,6 +505,8 @@ interface PrefixInfo {
   prefix: string;
   isAfterDot: boolean;
   dotPrefix?: string;
+  /** Full qualified prefix including dots (e.g., "db.schema." or "db.schema.tab") */
+  fullQualifiedPrefix: string;
 }
 
 /**
@@ -509,13 +515,30 @@ interface PrefixInfo {
 function extractPrefix(statement: string, cursor: number): PrefixInfo {
   const beforeCursor = statement.slice(0, cursor);
 
-  // Check if we're right after a dot
+  // Match qualified identifiers: db.schema.table or db.table or table
+  // This captures the full chain of dot-separated identifiers
+  const qualifiedMatch = beforeCursor.match(/((?:\w+\.)+)(\w*)$/);
+  if (qualifiedMatch) {
+    // qualifiedMatch[1] = "db." or "db.schema." (includes trailing dot)
+    // qualifiedMatch[2] = partial table name or ""
+    const qualifiers = qualifiedMatch[1]; // e.g., "cms." or "cms.main."
+    const partial = qualifiedMatch[2] || "";
+    return {
+      prefix: partial,
+      isAfterDot: true,
+      dotPrefix: qualifiers.slice(0, -1), // Remove trailing dot: "cms" or "cms.main"
+      fullQualifiedPrefix: qualifiers + partial,
+    };
+  }
+
+  // Check for single level: word followed by dot
   const dotMatch = beforeCursor.match(/(\w+)\.\s*(\w*)$/);
   if (dotMatch) {
     return {
       prefix: dotMatch[2] || "",
       isAfterDot: true,
       dotPrefix: dotMatch[1],
+      fullQualifiedPrefix: dotMatch[1] + "." + (dotMatch[2] || ""),
     };
   }
 
@@ -524,6 +547,7 @@ function extractPrefix(statement: string, cursor: number): PrefixInfo {
   return {
     prefix: wordMatch ? wordMatch[1] : "",
     isAfterDot: false,
+    fullQualifiedPrefix: wordMatch ? wordMatch[1] : "",
   };
 }
 
