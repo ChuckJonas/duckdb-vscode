@@ -59,7 +59,7 @@ export function showResultsPanel(
   context: vscode.ExtensionContext,
   sourceId: string | undefined,
   pageSize: number,
-  maxCopyRows: number,
+  maxCopyRows: number
 ): void {
   const db = getDuckDBService();
   const title = buildPanelTitle(result);
@@ -76,7 +76,7 @@ export function showResultsPanel(
       result,
       pageSize,
       maxCopyRows,
-      db,
+      db
     )
   ) {
     // Update the active source URI and queries when reusing panel
@@ -108,7 +108,7 @@ export function showResultsPanel(
 
   // Set up webview content and messaging
   const scriptUri = panel.webview.asWebviewUri(
-    vscode.Uri.joinPath(context.extensionUri, "out", "webview", "results.js"),
+    vscode.Uri.joinPath(context.extensionUri, "out", "webview", "results.js")
   );
   panel.webview.html = getWebviewHtml(scriptUri);
 
@@ -119,7 +119,7 @@ export function showResultsPanel(
     pageSize,
     maxCopyRows,
     db,
-    context,
+    context
   );
 }
 
@@ -170,7 +170,7 @@ export function getActiveResultsQueries(): string[] {
  */
 function buildPanelTitle(result: MultiQueryResultWithPages): string {
   const statementsWithResults = result.statements.filter(
-    (s) => s.meta.hasResults,
+    (s) => s.meta.hasResults
   );
   const lastStmt = result.statements[result.statements.length - 1];
   const displayRowCount = lastStmt?.meta.totalRows || 0;
@@ -198,7 +198,7 @@ function tryReuseExistingPanel(
   result: MultiQueryResultWithPages,
   pageSize: number,
   maxCopyRows: number,
-  db: ReturnType<typeof getDuckDBService>,
+  db: ReturnType<typeof getDuckDBService>
 ): boolean {
   if (!resultPanels.has(sourceId)) {
     return false;
@@ -252,7 +252,7 @@ function getResultsViewColumn(): vscode.ViewColumn {
  */
 function createWebviewPanel(
   context: vscode.ExtensionContext,
-  title: string,
+  title: string
 ): vscode.WebviewPanel {
   const panel = vscode.window.createWebviewPanel(
     "duckdbResults",
@@ -264,14 +264,14 @@ function createWebviewPanel(
       localResourceRoots: [
         vscode.Uri.joinPath(context.extensionUri, "out", "webview"),
       ],
-    },
+    }
   );
 
   // Set custom tab icon
   panel.iconPath = vscode.Uri.joinPath(
     context.extensionUri,
     "resources",
-    "duckdb-icon.svg",
+    "duckdb-icon.svg"
   );
 
   return panel;
@@ -284,7 +284,7 @@ function createPanelState(
   panel: vscode.WebviewPanel,
   cacheIds: string[],
   result: MultiQueryResultWithPages,
-  sourceUri?: vscode.Uri,
+  sourceUri?: vscode.Uri
 ): PanelState {
   // Extract SQL queries from result statements
   const queries = result.statements.map((s) => s.meta.sql);
@@ -304,7 +304,7 @@ function createPanelState(
 function registerPanel(
   sourceId: string,
   state: PanelState,
-  db: ReturnType<typeof getDuckDBService>,
+  db: ReturnType<typeof getDuckDBService>
 ): void {
   resultPanels.set(sourceId, state);
 
@@ -334,13 +334,11 @@ function setupMessageHandler(
   pageSize: number,
   maxCopyRows: number,
   db: ReturnType<typeof getDuckDBService>,
-  context: vscode.ExtensionContext,
+  context: vscode.ExtensionContext
 ): void {
   panel.webview.onDidReceiveMessage(
     async (message) => {
-      const currentState = sourceId
-        ? (resultPanels.get(sourceId) ?? null)
-        : null;
+      const currentState = sourceId ? resultPanels.get(sourceId) ?? null : null;
 
       switch (message.type) {
         case "ready":
@@ -365,7 +363,7 @@ function setupMessageHandler(
             message,
             currentState,
             maxCopyRows,
-            db,
+            db
           );
           break;
 
@@ -379,7 +377,7 @@ function setupMessageHandler(
       }
     },
     undefined,
-    context.subscriptions,
+    context.subscriptions
   );
 }
 
@@ -390,7 +388,7 @@ function handleReady(
   panel: vscode.WebviewPanel,
   result: MultiQueryResultWithPages,
   pageSize: number,
-  maxCopyRows: number,
+  maxCopyRows: number
 ): void {
   panel.webview.postMessage({
     type: "queryResult",
@@ -414,7 +412,7 @@ async function handleRequestPage(
   },
   currentState: PanelState | null,
   pageSize: number,
-  db: ReturnType<typeof getDuckDBService>,
+  db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
   const { cacheId, offset, sortColumn, sortDirection, whereClause } = message;
 
@@ -425,7 +423,7 @@ async function handleRequestPage(
       pageSize,
       sortColumn,
       sortDirection,
-      whereClause,
+      whereClause
     );
 
     // Update state sort info
@@ -455,7 +453,7 @@ async function handleRequestPage(
 async function handleRequestDistinctValues(
   panel: vscode.WebviewPanel,
   message: { cacheId: string; column: string; searchTerm?: string },
-  db: ReturnType<typeof getDuckDBService>,
+  db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
   const { cacheId, column, searchTerm } = message;
 
@@ -490,7 +488,7 @@ async function handleRequestDistinctValues(
 async function handleRequestColumnStats(
   panel: vscode.WebviewPanel,
   message: { cacheId: string; column: string; whereClause?: string },
-  db: ReturnType<typeof getDuckDBService>,
+  db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
   const { cacheId, column, whereClause } = message;
 
@@ -523,7 +521,7 @@ async function handleExportMessage(
   },
   currentState: PanelState | null,
   maxCopyRows: number,
-  db: ReturnType<typeof getDuckDBService>,
+  db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
   const { cacheId, format } = message;
   const sortColumn = currentState?.sortColumn;
@@ -535,7 +533,7 @@ async function handleExportMessage(
     format,
     maxCopyRows,
     sortColumn,
-    sortDirection,
+    sortDirection
   );
 }
 
@@ -547,7 +545,7 @@ async function handleRequestCopyData(
   message: { cacheId: string },
   currentState: PanelState | null,
   maxCopyRows: number,
-  db: ReturnType<typeof getDuckDBService>,
+  db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
   const { cacheId } = message;
   const sortColumn = currentState?.sortColumn;
@@ -558,7 +556,7 @@ async function handleRequestCopyData(
       cacheId,
       maxCopyRows,
       sortColumn,
-      sortDirection,
+      sortDirection
     );
     panel.webview.postMessage({
       type: "copyData",
@@ -579,7 +577,7 @@ async function handleRequestCopyData(
 async function handleRequestColumnSummaries(
   panel: vscode.WebviewPanel,
   message: { cacheId: string },
-  db: ReturnType<typeof getDuckDBService>,
+  db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
   const { cacheId } = message;
 
@@ -614,7 +612,7 @@ async function handleExport(
   format: "csv" | "parquet" | "json" | "jsonl" | "csv-tab" | "json-tab",
   maxRows: number,
   sortColumn?: string,
-  sortDirection?: "asc" | "desc",
+  sortDirection?: "asc" | "desc"
 ): Promise<void> {
   // Handle "Open in Editor" formats (has row limit since it loads into memory)
   if (format === "csv-tab" || format === "json-tab") {
@@ -635,14 +633,14 @@ async function openInEditor(
   format: "csv-tab" | "json-tab",
   maxRows: number,
   sortColumn?: string,
-  sortDirection?: "asc" | "desc",
+  sortDirection?: "asc" | "desc"
 ): Promise<void> {
   try {
     const { columns, rows } = await db.getCopyData(
       cacheId,
       maxRows,
       sortColumn,
-      sortDirection,
+      sortDirection
     );
     const { content, language } = formatDataForEditor(columns, rows, format);
 
@@ -651,7 +649,7 @@ async function openInEditor(
 
     if (rows.length >= maxRows) {
       vscode.window.showInformationMessage(
-        `Opened first ${maxRows.toLocaleString()} rows (limit reached)`,
+        `Opened first ${maxRows.toLocaleString()} rows (limit reached)`
       );
     }
   } catch (error) {
@@ -665,12 +663,12 @@ async function openInEditor(
 function formatDataForEditor(
   columns: string[],
   rows: Record<string, unknown>[],
-  format: "csv-tab" | "json-tab",
+  format: "csv-tab" | "json-tab"
 ): { content: string; language: string } {
   if (format === "csv-tab") {
     const header = columns.join(",");
     const csvRows = rows.map((row) =>
-      columns.map((col) => formatCsvCell(row[col])).join(","),
+      columns.map((col) => formatCsvCell(row[col])).join(",")
     );
     return {
       content: [header, ...csvRows].join("\n"),
@@ -686,10 +684,17 @@ function formatDataForEditor(
 
 /**
  * Format a single cell value for CSV output
+ * Quotes values containing commas, quotes, or newlines.
+ * Prefixes formula-triggering characters (=, +, -, @) with a tab
+ * to prevent formula injection when opened in spreadsheet applications.
  */
 function formatCsvCell(val: unknown): string {
   if (val === null || val === undefined) return "";
-  const str = String(val);
+  let str = String(val);
+  // Prevent formula injection in spreadsheet applications
+  if (/^[=+\-@]/.test(str)) {
+    str = "\t" + str;
+  }
   // Quote if contains comma, quote, or newline
   if (str.includes(",") || str.includes('"') || str.includes("\n")) {
     return `"${str.replace(/"/g, '""')}"`;
@@ -705,7 +710,7 @@ async function exportToFile(
   cacheId: string,
   format: "csv" | "parquet" | "json" | "jsonl",
   sortColumn?: string,
-  sortDirection?: "asc" | "desc",
+  sortDirection?: "asc" | "desc"
 ): Promise<void> {
   const extensions: Record<string, { ext: string; name: string }> = {
     csv: { ext: "csv", name: "CSV Files" },
@@ -717,7 +722,12 @@ async function exportToFile(
   const { ext, name } = extensions[format];
 
   const uri = await vscode.window.showSaveDialog({
-    defaultUri: vscode.Uri.file(path.join(process.cwd(), `export.${ext}`)),
+    defaultUri: vscode.Uri.file(
+      path.join(
+        vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || process.cwd(),
+        `export.${ext}`
+      )
+    ),
     filters: { [name]: [ext] },
     title: `Export as ${format.toUpperCase()}`,
   });
@@ -734,10 +744,10 @@ async function exportToFile(
       uri.fsPath,
       undefined,
       sortColumn,
-      sortDirection,
+      sortDirection
     );
     vscode.window.showInformationMessage(
-      `Exported to ${path.basename(uri.fsPath)}`,
+      `Exported to ${path.basename(uri.fsPath)}`
     );
   } catch (error) {
     vscode.window.showErrorMessage(`Export failed: ${error}`);

@@ -4,6 +4,7 @@ import { Histogram } from './ui/Histogram';
 import { TimeSeriesChart } from './ui/TimeSeriesChart';
 import { Tooltip } from './ui/Tooltip';
 import { Toggle } from './ui/Toggle';
+import { formatCount } from './utils/format';
 import { 
   Copy, X, ChevronRight, ChevronDown, Search,
   Hash, Binary, Type, ToggleLeft, Calendar, Clock, Brackets, Braces, Map as MapIcon, HelpCircle, Fingerprint, DecimalsArrowRight
@@ -557,7 +558,6 @@ function NumericDistribution({ stats, histogram }: NumericDistributionProps) {
             key={idx}
             className={`stats-table-row ${highlightValue === row.value ? 'highlighted' : ''}`}
             onMouseEnter={() => {
-              console.log('🦆 Mouse enter stat row:', row.label, row.value);
               if (row.value !== undefined) {
                 // Show IQR range for 25th and 75th percentiles
                 if ((row.label === '25th %' || row.label === '75th %') && iqrRange) {
@@ -571,7 +571,6 @@ function NumericDistribution({ stats, histogram }: NumericDistributionProps) {
                 }
                 // Regular single value highlight
                 else {
-                  console.log('🦆 Setting highlightValue to:', row.value);
                   setHighlightValue(row.value);
                   setHighlightRange(null);
                 }
@@ -596,12 +595,6 @@ function MiniTopValues({ data, total }: { data: { value: string; count: number; 
   const topItems = data.filter(d => d.type === 'top_n').slice(0, 10);
   const otherItem = data.find(d => d.type === 'other');
   const maxCount = Math.max(...topItems.map(d => d.count), otherItem?.count ?? 0);
-  
-  const formatCount = (count: number): string => {
-    if (count >= 1000000) return (count / 1000000).toFixed(1) + 'M';
-    if (count >= 1000) return (count / 1000).toFixed(1) + 'K';
-    return count.toLocaleString();
-  };
   
   return (
     <div className="mini-top-values">

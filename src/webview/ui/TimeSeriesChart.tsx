@@ -1,4 +1,5 @@
 import React, { useState, useMemo } from 'react';
+import { formatCount } from '../utils/format';
 
 export interface TimeSeriesBin {
   date: string;  // ISO date string or date bucket label
@@ -77,17 +78,6 @@ function formatDateFull(dateStr: string): string {
     month: 'short', 
     day: 'numeric' 
   });
-}
-
-// Format count for display
-function formatCount(count: number): string {
-  if (count >= 1000000) {
-    return (count / 1000000).toFixed(1) + 'M';
-  }
-  if (count >= 1000) {
-    return (count / 1000).toFixed(1) + 'K';
-  }
-  return count.toString();
 }
 
 export function TimeSeriesChart({ data }: TimeSeriesChartProps) {

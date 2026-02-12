@@ -14,6 +14,7 @@ import {
   generateFilterId 
 } from './ui/FilterBar';
 import { ColumnFilterPopover } from './ui/ColumnFilterPopover';
+import { formatValue, formatTableAsText } from './utils/format';
 import { Copy, Download, ExternalLink, ChevronDown, Filter, Code, BarChart2, ArrowUp, ArrowDown, ChevronsUpDown } from 'lucide-react';
 import './styles.css';
 
@@ -248,11 +249,9 @@ export function ResultsTable({
   }, [requestPage, sort]);
 
   const handleAddFilter = useCallback((filter: ColumnFilter) => {
-    setFilterState(prev => ({
-      ...prev,
-      filters: [...prev.filters, filter],
-    }));
-    applyFilters([...filterState.filters, filter]);
+    const newFilters = [...filterState.filters, filter];
+    setFilterState(prev => ({ ...prev, filters: newFilters }));
+    applyFilters(newFilters);
     setFilterPopover(null);
   }, [filterState.filters, applyFilters]);
 
@@ -268,12 +267,14 @@ export function ResultsTable({
   }, [requestPage, sort]);
 
   const handleTogglePause = useCallback(() => {
-    const newPaused = !filterState.isPaused;
-    setFilterState(prev => ({ ...prev, isPaused: newPaused }));
-    // Re-fetch with or without filters
-    const clause = newPaused ? '' : filtersToWhereClause(filterState.filters);
-    requestPage(0, sort.column, sort.direction, clause);
-  }, [filterState, requestPage, sort]);
+    setFilterState(prev => {
+      const newPaused = !prev.isPaused;
+      // Re-fetch with or without filters using latest state
+      const clause = newPaused ? '' : filtersToWhereClause(prev.filters);
+      requestPage(0, sort.column, sort.direction, clause);
+      return { ...prev, isPaused: newPaused };
+    });
+  }, [requestPage, sort]);
 
   const handleOpenFilterPopover = useCallback((column: string, columnType: string, event: React.MouseEvent) => {
     const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
@@ -1163,18 +1164,3 @@ function SqlModal({ sql, onClose, onCopy, title = "SQL" }: SqlModalProps) {
   );
 }
 
-// ============================================================================
-// UTILITY FUNCTIONS
-// ============================================================================
-
-function formatValue(value: unknown): string {
-  if (value === null || value === undefined) return 'NULL';
-  if (typeof value === 'object') return JSON.stringify(value);
-  return String(value);
-}
-
-function formatTableAsText(columns: string[], rows: Record<string, unknown>[]): string {
-  const header = columns.join('\t');
-  const body = rows.map(row => columns.map(col => formatValue(row[col])).join('\t')).join('\n');
-  return `${header}\n${body}`;
-}

@@ -78,7 +78,7 @@ let diagnosticCollection: vscode.DiagnosticCollection;
 function showErrorDiagnostic(
   document: vscode.TextDocument,
   error: DuckDBError,
-  sqlStartOffset: number = 0,
+  sqlStartOffset: number = 0
 ): void {
   // Clear previous diagnostics for this document
   diagnosticCollection.delete(document.uri);
@@ -93,7 +93,7 @@ function showErrorDiagnostic(
 
     // Get the line text to determine end column
     const lineText = document.lineAt(
-      Math.min(line, document.lineCount - 1),
+      Math.min(line, document.lineCount - 1)
     ).text;
     const endColumn = Math.min(column + 20, lineText.length); // Highlight up to 20 chars or end of line
 
@@ -112,7 +112,7 @@ function showErrorDiagnostic(
   const diagnostic = new vscode.Diagnostic(
     range,
     error.message,
-    vscode.DiagnosticSeverity.Error,
+    vscode.DiagnosticSeverity.Error
   );
   diagnostic.source = `DuckDB (${error.type})`;
 
@@ -182,7 +182,7 @@ export async function activate(context: vscode.ExtensionContext) {
   // Create status bar item (right side, low priority = far right)
   statusBarItem = vscode.window.createStatusBarItem(
     vscode.StatusBarAlignment.Right,
-    50,
+    50
   );
   statusBarItem.command = "duckdb.selectDatabase";
   updateStatusBar();
@@ -240,7 +240,7 @@ export async function activate(context: vscode.ExtensionContext) {
         const lastStmt = result.statements[result.statements.length - 1];
         const totalRows = result.statements.reduce(
           (sum, s) => sum + s.meta.totalRows,
-          0,
+          0
         );
         const totalCols = lastStmt?.meta.columns.length || 0;
         await getHistoryService().addEntry({
@@ -276,22 +276,22 @@ export async function activate(context: vscode.ExtensionContext) {
         if (error instanceof DuckDBQueryError) {
           console.log(
             "🦆 DuckDB Error:",
-            JSON.stringify(error.duckdbError, null, 2),
+            JSON.stringify(error.duckdbError, null, 2)
           );
           showErrorDiagnostic(
             editor.document,
             error.duckdbError,
-            sqlStartOffset,
+            sqlStartOffset
           );
           vscode.window.showErrorMessage(
-            `DuckDB ${error.duckdbError.type} Error: ${error.duckdbError.message}`,
+            `DuckDB ${error.duckdbError.type} Error: ${error.duckdbError.message}`
           );
         } else {
           console.log("🦆 Non-DuckDB Error:", error);
           vscode.window.showErrorMessage(`${error}`);
         }
       }
-    },
+    }
   );
 
   // Register Run Statement command (from CodeLens)
@@ -325,7 +325,7 @@ export async function activate(context: vscode.ExtensionContext) {
         const lastStmt = result.statements[result.statements.length - 1];
         const totalRows = result.statements.reduce(
           (sum, s) => sum + s.meta.totalRows,
-          0,
+          0
         );
         await getHistoryService().addEntry({
           sql,
@@ -358,18 +358,18 @@ export async function activate(context: vscode.ExtensionContext) {
         if (error instanceof DuckDBQueryError) {
           console.log(
             "🦆 DuckDB Error (statement):",
-            JSON.stringify(error.duckdbError, null, 2),
+            JSON.stringify(error.duckdbError, null, 2)
           );
           showErrorDiagnostic(document, error.duckdbError, startOffset);
           vscode.window.showErrorMessage(
-            `DuckDB ${error.duckdbError.type} Error: ${error.duckdbError.message}`,
+            `DuckDB ${error.duckdbError.type} Error: ${error.duckdbError.message}`
           );
         } else {
           console.log("🦆 Non-DuckDB Error (statement):", error);
           vscode.window.showErrorMessage(`${error}`);
         }
       }
-    },
+    }
   );
 
   // Register Select Database command (status bar click)
@@ -404,7 +404,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
       // Add detached databases (from settings but not attached)
       const detachedDbs = databases.filter(
-        (d) => !d.isAttached && d.isConfigured,
+        (d) => !d.isAttached && d.isConfigured
       );
       if (detachedDbs.length > 0) {
         items.push({
@@ -445,7 +445,7 @@ export async function activate(context: vscode.ExtensionContext) {
           label: "$(folder-opened) Attach Existing...",
           description: "Attach an existing .duckdb file",
           action: "attach",
-        },
+        }
       );
 
       const selected = await vscode.window.showQuickPick(items, {
@@ -482,11 +482,11 @@ export async function activate(context: vscode.ExtensionContext) {
               await setDefaultDatabase(alias);
 
               vscode.window.showInformationMessage(
-                `🦆 Created database: ${alias}`,
+                `🦆 Created database: ${alias}`
               );
             } catch (error) {
               vscode.window.showErrorMessage(
-                `Failed to create database: ${error}`,
+                `Failed to create database: ${error}`
               );
             }
           }
@@ -520,7 +520,7 @@ export async function activate(context: vscode.ExtensionContext) {
                   readOnly: true,
                 },
               ],
-              { placeHolder: "Select access mode" },
+              { placeHolder: "Select access mode" }
             );
 
             if (!readOnlyChoice) break;
@@ -530,7 +530,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 (sql) => db.run(sql),
                 filePath,
                 alias,
-                readOnlyChoice.readOnly,
+                readOnlyChoice.readOnly
               );
               currentDatabase = alias;
               updateStatusBar();
@@ -548,11 +548,11 @@ export async function activate(context: vscode.ExtensionContext) {
 
               const modeLabel = readOnlyChoice.readOnly ? " (read-only)" : "";
               vscode.window.showInformationMessage(
-                `🦆 Attached database: ${alias}${modeLabel}`,
+                `🦆 Attached database: ${alias}${modeLabel}`
               );
             } catch (error) {
               vscode.window.showErrorMessage(
-                `Failed to attach database: ${error}`,
+                `Failed to attach database: ${error}`
               );
             }
           }
@@ -564,12 +564,12 @@ export async function activate(context: vscode.ExtensionContext) {
             // Re-attach a detached database from settings
             const configs = getConfiguredDatabases();
             const config = configs.find(
-              (c) => c.alias === selected.databaseName,
+              (c) => c.alias === selected.databaseName
             );
 
             if (!config) {
               vscode.window.showErrorMessage(
-                `No configuration found for database: ${selected.databaseName}`,
+                `No configuration found for database: ${selected.databaseName}`
               );
               break;
             }
@@ -593,7 +593,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 {
                   placeHolder: "Select access mode",
                   // Pre-select the current mode
-                },
+                }
               );
 
               if (!readOnlyChoice) break; // User cancelled
@@ -618,7 +618,7 @@ export async function activate(context: vscode.ExtensionContext) {
                       runFn,
                       filePath,
                       config.alias,
-                      readOnly,
+                      readOnly
                     );
                   }
                   break;
@@ -634,17 +634,17 @@ export async function activate(context: vscode.ExtensionContext) {
               if (config.type === "file" && readOnly !== config.readOnly) {
                 await updateDatabaseReadOnlyState(
                   selected.databaseName,
-                  readOnly,
+                  readOnly
                 );
               }
               databaseExplorer.refresh();
               const modeLabel = readOnly ? " (read-only)" : "";
               vscode.window.showInformationMessage(
-                `🦆 Attached database: ${selected.databaseName}${modeLabel}`,
+                `🦆 Attached database: ${selected.databaseName}${modeLabel}`
               );
             } catch (error) {
               vscode.window.showErrorMessage(
-                `Failed to attach database: ${error}`,
+                `Failed to attach database: ${error}`
               );
             }
           }
@@ -663,14 +663,14 @@ export async function activate(context: vscode.ExtensionContext) {
               await setDefaultDatabase(selected.databaseName);
             } catch (error) {
               vscode.window.showErrorMessage(
-                `Failed to switch database: ${error}`,
+                `Failed to switch database: ${error}`
               );
             }
           }
           break;
         }
       }
-    },
+    }
   );
 
   // Register Manage Extensions command
@@ -678,7 +678,7 @@ export async function activate(context: vscode.ExtensionContext) {
     "duckdb.manageExtensions",
     async () => {
       await showExtensionsQuickPick(db);
-    },
+    }
   );
 
   // Register Query File command (right-click on data files)
@@ -722,12 +722,12 @@ export async function activate(context: vscode.ExtensionContext) {
           context,
           doc.uri.toString(),
           pageSize,
-          getMaxCopyRows(),
+          getMaxCopyRows()
         );
       } catch (error) {
         vscode.window.showErrorMessage(`Query failed: ${error}`);
       }
-    },
+    }
   );
 
   const copyQueryCmd = vscode.commands.registerCommand(
@@ -741,7 +741,7 @@ export async function activate(context: vscode.ExtensionContext) {
       const sql = getQueryForFile(uri);
       await vscode.env.clipboard.writeText(sql);
       vscode.window.showInformationMessage("Query copied to clipboard");
-    },
+    }
   );
 
   const summarizeFileCmd = vscode.commands.registerCommand(
@@ -764,12 +764,12 @@ export async function activate(context: vscode.ExtensionContext) {
 
       // Execute the query
       await vscode.commands.executeCommand("duckdb.executeQuery");
-    },
+    }
   );
 
   // File listing function for autocomplete
   async function listFilesForAutocomplete(
-    dirPath: string,
+    dirPath: string
   ): Promise<{ name: string; isDirectory: boolean }[]> {
     try {
       // Get workspace folder or document folder
@@ -835,7 +835,7 @@ export async function activate(context: vscode.ExtensionContext) {
             (sql) => db.query(sql),
             fullText,
             cursorPosition,
-            listFilesForAutocomplete,
+            listFilesForAutocomplete
           );
 
           return suggestions.map(
@@ -890,7 +890,7 @@ export async function activate(context: vscode.ExtensionContext) {
               }
 
               return item;
-            },
+            }
           );
         } catch (error) {
           console.error("🦆 Autocomplete error:", error);
@@ -905,7 +905,7 @@ export async function activate(context: vscode.ExtensionContext) {
     "\n",
     "'", // Trigger on opening quote for file paths
     '"', // Trigger on opening quote for file paths
-    "/", // Trigger on slash for path navigation
+    "/" // Trigger on slash for path navigation
   );
 
   // ============================================
@@ -926,7 +926,7 @@ export async function activate(context: vscode.ExtensionContext) {
     "duckdb.explorer.refresh",
     () => {
       databaseExplorer.refresh();
-    },
+    }
   );
 
   const explorerSelectTop100Cmd = vscode.commands.registerCommand(
@@ -945,12 +945,12 @@ export async function activate(context: vscode.ExtensionContext) {
           context,
           `explorer-${node.name}`,
           pageSize,
-          getMaxCopyRows(),
+          getMaxCopyRows()
         );
       } catch (error) {
         vscode.window.showErrorMessage(`Query failed: ${error}`);
       }
-    },
+    }
   );
 
   const explorerDescribeCmd = vscode.commands.registerCommand(
@@ -969,12 +969,12 @@ export async function activate(context: vscode.ExtensionContext) {
           context,
           `describe-${node.name}`,
           pageSize,
-          getMaxCopyRows(),
+          getMaxCopyRows()
         );
       } catch (error) {
         vscode.window.showErrorMessage(`Describe failed: ${error}`);
       }
-    },
+    }
   );
 
   const explorerSummarizeCmd = vscode.commands.registerCommand(
@@ -993,12 +993,12 @@ export async function activate(context: vscode.ExtensionContext) {
           context,
           `summarize-${node.name}`,
           pageSize,
-          getMaxCopyRows(),
+          getMaxCopyRows()
         );
       } catch (error) {
         vscode.window.showErrorMessage(`Summarize failed: ${error}`);
       }
-    },
+    }
   );
 
   const explorerViewDefinitionCmd = vscode.commands.registerCommand(
@@ -1017,7 +1017,7 @@ export async function activate(context: vscode.ExtensionContext) {
             },
             node.database!,
             schema,
-            node.name,
+            node.name
           );
         } else {
           definition = await getTableDefinition(
@@ -1027,7 +1027,7 @@ export async function activate(context: vscode.ExtensionContext) {
             },
             node.database!,
             schema,
-            node.name,
+            node.name
           );
         }
 
@@ -1040,7 +1040,7 @@ export async function activate(context: vscode.ExtensionContext) {
       } catch (error) {
         vscode.window.showErrorMessage(`Failed to get definition: ${error}`);
       }
-    },
+    }
   );
 
   const explorerCopyNameCmd = vscode.commands.registerCommand(
@@ -1060,7 +1060,7 @@ export async function activate(context: vscode.ExtensionContext) {
       }
       await vscode.env.clipboard.writeText(name);
       vscode.window.showInformationMessage(`Copied: ${name}`);
-    },
+    }
   );
 
   const explorerSelectColumnCmd = vscode.commands.registerCommand(
@@ -1079,12 +1079,12 @@ export async function activate(context: vscode.ExtensionContext) {
           context,
           `explorer-col-${node.tableName}-${node.name}`,
           pageSize,
-          getMaxCopyRows(),
+          getMaxCopyRows()
         );
       } catch (error) {
         vscode.window.showErrorMessage(`Query failed: ${error}`);
       }
-    },
+    }
   );
 
   const explorerDropCmd = vscode.commands.registerCommand(
@@ -1098,7 +1098,7 @@ export async function activate(context: vscode.ExtensionContext) {
       const confirm = await vscode.window.showWarningMessage(
         `Are you sure you want to drop ${objectType} ${node.name}?`,
         { modal: true },
-        "Drop",
+        "Drop"
       );
 
       if (confirm === "Drop") {
@@ -1108,17 +1108,17 @@ export async function activate(context: vscode.ExtensionContext) {
             objectType,
             node.database!,
             schema,
-            node.name,
+            node.name
           );
           databaseExplorer.refresh();
           vscode.window.showInformationMessage(
-            `Dropped ${objectType} ${node.name}`,
+            `Dropped ${objectType} ${node.name}`
           );
         } catch (error) {
           vscode.window.showErrorMessage(`Failed to drop: ${error}`);
         }
       }
-    },
+    }
   );
 
   // Database management commands
@@ -1134,12 +1134,12 @@ export async function activate(context: vscode.ExtensionContext) {
         updateStatusBar();
         databaseExplorer.refresh();
         vscode.window.showInformationMessage(
-          `Now using database: ${node.name}`,
+          `Now using database: ${node.name}`
         );
       } catch (error) {
         vscode.window.showErrorMessage(`Failed to switch database: ${error}`);
       }
-    },
+    }
   );
 
   const explorerAttachDatabaseCmd = vscode.commands.registerCommand(
@@ -1148,7 +1148,7 @@ export async function activate(context: vscode.ExtensionContext) {
       // Reuse the existing selectDatabase command which has attach functionality
       await vscode.commands.executeCommand("duckdb.selectDatabase");
       databaseExplorer.refresh();
-    },
+    }
   );
 
   const explorerDetachDatabaseCmd = vscode.commands.registerCommand(
@@ -1157,22 +1157,30 @@ export async function activate(context: vscode.ExtensionContext) {
       if (node.type !== "database") return;
       if (node.name === "memory") {
         vscode.window.showWarningMessage(
-          "Cannot detach the default memory database",
+          "Cannot detach the default memory database"
         );
         return;
       }
 
       try {
+        // Query DuckDB for the actual current database
+        // (the local variable can be out of sync if the user ran USE manually)
+        const actualCurrentDb = await getCurrentDatabase(async (s) => ({
+          rows: await db.query(s),
+        }));
+
+        // If this is the current database, switch to memory first
+        // (DuckDB won't allow detaching the default database)
+        if (node.name === actualCurrentDb) {
+          await switchDatabase(async (sql) => db.run(sql), "memory");
+          currentDatabase = "memory";
+        }
+
         // Detach from DuckDB
         await detachDatabase(async (sql) => db.run(sql), node.name);
 
         // Update settings to mark as detached (don't remove)
         await updateDatabaseAttachedState(node.name, false);
-
-        // If this was the current database, switch to memory
-        if (node.name === currentDatabase) {
-          currentDatabase = "memory";
-        }
 
         databaseExplorer.refresh();
         updateStatusBar();
@@ -1180,7 +1188,7 @@ export async function activate(context: vscode.ExtensionContext) {
       } catch (error) {
         vscode.window.showErrorMessage(`Failed to detach database: ${error}`);
       }
-    },
+    }
   );
 
   // Reattach a detached database (prompts for read-only mode for file databases)
@@ -1195,7 +1203,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
       if (!config) {
         vscode.window.showErrorMessage(
-          `No configuration found for database: ${node.name}`,
+          `No configuration found for database: ${node.name}`
         );
         return;
       }
@@ -1216,7 +1224,7 @@ export async function activate(context: vscode.ExtensionContext) {
               readOnly: true,
             },
           ],
-          { placeHolder: "Select access mode" },
+          { placeHolder: "Select access mode" }
         );
 
         if (!readOnlyChoice) return; // User cancelled
@@ -1259,12 +1267,12 @@ export async function activate(context: vscode.ExtensionContext) {
         databaseExplorer.refresh();
         const modeLabel = readOnly ? " (read-only)" : "";
         vscode.window.showInformationMessage(
-          `Attached database: ${node.name}${modeLabel}`,
+          `Attached database: ${node.name}${modeLabel}`
         );
       } catch (error) {
         vscode.window.showErrorMessage(`Failed to attach database: ${error}`);
       }
-    },
+    }
   );
 
   // Forget a database (remove from settings completely)
@@ -1276,7 +1284,7 @@ export async function activate(context: vscode.ExtensionContext) {
       const confirm = await vscode.window.showWarningMessage(
         `Remove "${node.name}" from workspace settings?`,
         { modal: true },
-        "Remove",
+        "Remove"
       );
 
       if (confirm === "Remove") {
@@ -1284,13 +1292,13 @@ export async function activate(context: vscode.ExtensionContext) {
           await removeDatabaseFromSettings(node.name);
           databaseExplorer.refresh();
           vscode.window.showInformationMessage(
-            `Removed database configuration: ${node.name}`,
+            `Removed database configuration: ${node.name}`
           );
         } catch (error) {
           vscode.window.showErrorMessage(`Failed to remove database: ${error}`);
         }
       }
-    },
+    }
   );
 
   // New Schema command - creates directly
@@ -1316,12 +1324,12 @@ export async function activate(context: vscode.ExtensionContext) {
         await createSchema((sql) => db.run(sql), node.name, schemaName);
         databaseExplorer.refresh();
         vscode.window.showInformationMessage(
-          `Created schema: ${node.name}.${schemaName}`,
+          `Created schema: ${node.name}.${schemaName}`
         );
       } catch (error) {
         vscode.window.showErrorMessage(`Failed to create schema: ${error}`);
       }
-    },
+    }
   );
 
   // New Table command - opens boilerplate
@@ -1338,7 +1346,7 @@ export async function activate(context: vscode.ExtensionContext) {
         language: "sql",
       });
       await vscode.window.showTextDocument(doc);
-    },
+    }
   );
 
   // New View command - opens boilerplate
@@ -1355,7 +1363,7 @@ export async function activate(context: vscode.ExtensionContext) {
         language: "sql",
       });
       await vscode.window.showTextDocument(doc);
-    },
+    }
   );
 
   // ============================================
@@ -1373,7 +1381,7 @@ export async function activate(context: vscode.ExtensionContext) {
     "duckdb.history.refresh",
     () => {
       historyExplorer.refresh();
-    },
+    }
   );
 
   const historyRunAgainCmd = vscode.commands.registerCommand(
@@ -1389,7 +1397,7 @@ export async function activate(context: vscode.ExtensionContext) {
           context,
           `history-${node.entry.id}`,
           pageSize,
-          getMaxCopyRows(),
+          getMaxCopyRows()
         );
 
         // Update history with new execution
@@ -1410,7 +1418,7 @@ export async function activate(context: vscode.ExtensionContext) {
       } catch (error) {
         vscode.window.showErrorMessage(`Query failed: ${error}`);
       }
-    },
+    }
   );
 
   const historyOpenInEditorCmd = vscode.commands.registerCommand(
@@ -1423,7 +1431,7 @@ export async function activate(context: vscode.ExtensionContext) {
         language: "sql",
       });
       await vscode.window.showTextDocument(doc);
-    },
+    }
   );
 
   const historyCopySqlCmd = vscode.commands.registerCommand(
@@ -1433,7 +1441,7 @@ export async function activate(context: vscode.ExtensionContext) {
 
       await vscode.env.clipboard.writeText(node.entry.sql);
       vscode.window.showInformationMessage("SQL copied to clipboard");
-    },
+    }
   );
 
   const historyDeleteCmd = vscode.commands.registerCommand(
@@ -1442,7 +1450,7 @@ export async function activate(context: vscode.ExtensionContext) {
       if (node.type !== "query" || !node.entry) return;
 
       await getHistoryService().deleteEntry(node.entry.id);
-    },
+    }
   );
 
   const historyClearAllCmd = vscode.commands.registerCommand(
@@ -1451,14 +1459,14 @@ export async function activate(context: vscode.ExtensionContext) {
       const confirm = await vscode.window.showWarningMessage(
         "Clear all query history?",
         { modal: true },
-        "Clear",
+        "Clear"
       );
 
       if (confirm === "Clear") {
         await getHistoryService().clearAll();
         vscode.window.showInformationMessage("Query history cleared");
       }
-    },
+    }
   );
 
   // ============================================
@@ -1478,7 +1486,7 @@ export async function activate(context: vscode.ExtensionContext) {
     "duckdb.extensions.refresh",
     () => {
       extensionsExplorer.refresh();
-    },
+    }
   );
 
   const extensionsAddCmd = vscode.commands.registerCommand(
@@ -1487,7 +1495,7 @@ export async function activate(context: vscode.ExtensionContext) {
       // Reuse the existing manageExtensions logic
       await showExtensionsQuickPick(db);
       extensionsExplorer.refresh();
-    },
+    }
   );
 
   const extensionsUnloadCmd = vscode.commands.registerCommand(
@@ -1497,10 +1505,10 @@ export async function activate(context: vscode.ExtensionContext) {
 
       await removeExtensionFromSettings(node.name);
       vscode.window.showInformationMessage(
-        `Removed ${node.name} from auto-load. Restart VS Code to unload.`,
+        `Removed ${node.name} from auto-load. Restart VS Code to unload.`
       );
       extensionsExplorer.refresh();
-    },
+    }
   );
 
   // Register SQL CodeLens provider for run actions
@@ -1516,7 +1524,7 @@ export async function activate(context: vscode.ExtensionContext) {
         try {
           // First check if there's already a visible editor for this file
           const existingEditor = vscode.window.visibleTextEditors.find(
-            (editor) => editor.document.uri.toString() === sourceUri.toString(),
+            (editor) => editor.document.uri.toString() === sourceUri.toString()
           );
 
           if (existingEditor) {
@@ -1532,7 +1540,7 @@ export async function activate(context: vscode.ExtensionContext) {
           }
         } catch (error) {
           vscode.window.showErrorMessage(
-            `Could not open source file: ${error}`,
+            `Could not open source file: ${error}`
           );
         }
       } else {
@@ -1547,11 +1555,11 @@ export async function activate(context: vscode.ExtensionContext) {
           await vscode.window.showTextDocument(doc, { preserveFocus: false });
         } else {
           vscode.window.showInformationMessage(
-            "No source file associated with this results panel",
+            "No source file associated with this results panel"
           );
         }
       }
-    },
+    }
   );
 
   context.subscriptions.push(
@@ -1591,7 +1599,7 @@ export async function activate(context: vscode.ExtensionContext) {
     extensionsRefreshCmd,
     extensionsAddCmd,
     extensionsUnloadCmd,
-    goToSourceCmd,
+    goToSourceCmd
   );
 }
 
@@ -1604,7 +1612,7 @@ export async function deactivate() {
  * Only attaches databases that were attached last session (attached !== false)
  */
 async function autoAttachDatabases(
-  db: ReturnType<typeof getDuckDBService>,
+  db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
   const config = getWorkspaceConfig();
   const databases = config.get<DatabaseConfig[]>("databases", []);
@@ -1641,7 +1649,7 @@ async function autoAttachDatabases(
         case "file": {
           if (!dbConfig.path) {
             vscode.window.showWarningMessage(
-              `DuckDB: Database "${dbConfig.alias}" missing path`,
+              `DuckDB: Database "${dbConfig.alias}" missing path`
             );
             continue;
           }
@@ -1656,7 +1664,7 @@ async function autoAttachDatabases(
             await vscode.workspace.fs.stat(vscode.Uri.file(filePath));
           } catch {
             vscode.window.showErrorMessage(
-              `DuckDB: Database file not found: ${dbConfig.path}`,
+              `DuckDB: Database file not found: ${dbConfig.path}`
             );
             // Mark as detached since we couldn't attach it
             await updateDatabaseAttachedState(dbConfig.alias, false);
@@ -1667,7 +1675,7 @@ async function autoAttachDatabases(
             runFn,
             filePath,
             dbConfig.alias,
-            dbConfig.readOnly,
+            dbConfig.readOnly
           );
           attachedCount++;
           break;
@@ -1676,7 +1684,7 @@ async function autoAttachDatabases(
         case "manual": {
           if (!dbConfig.sql) {
             vscode.window.showWarningMessage(
-              `DuckDB: Database "${dbConfig.alias}" missing sql`,
+              `DuckDB: Database "${dbConfig.alias}" missing sql`
             );
             continue;
           }
@@ -1687,12 +1695,12 @@ async function autoAttachDatabases(
 
         default:
           vscode.window.showWarningMessage(
-            `DuckDB: Unknown database type for "${dbConfig.alias}"`,
+            `DuckDB: Unknown database type for "${dbConfig.alias}"`
           );
       }
     } catch (error) {
       vscode.window.showErrorMessage(
-        `DuckDB: Failed to attach "${dbConfig.alias}": ${error}`,
+        `DuckDB: Failed to attach "${dbConfig.alias}": ${error}`
       );
       // Mark as detached since we couldn't attach it
       await updateDatabaseAttachedState(dbConfig.alias, false);
@@ -1707,14 +1715,14 @@ async function autoAttachDatabases(
     } catch (error) {
       // Default database might not be attached, that's okay
       console.log(
-        `🦆 Could not switch to default database "${defaultDb}": ${error}`,
+        `🦆 Could not switch to default database "${defaultDb}": ${error}`
       );
     }
   }
 
   if (attachedCount > 0 || skippedCount > 0) {
     console.log(
-      `🦆 Auto-attached ${attachedCount} database(s), skipped ${skippedCount}`,
+      `🦆 Auto-attached ${attachedCount} database(s), skipped ${skippedCount}`
     );
   }
 }
@@ -1732,7 +1740,7 @@ interface DatabaseConfig {
  * Auto-load extensions from workspace settings
  */
 async function autoLoadExtensions(
-  db: ReturnType<typeof getDuckDBService>,
+  db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
   const config = getWorkspaceConfig();
   const extensions = config.get<string[]>("extensions", []);
@@ -1750,7 +1758,7 @@ async function autoLoadExtensions(
       loadedCount++;
     } catch (error) {
       vscode.window.showWarningMessage(
-        `DuckDB: Failed to load extension "${ext}": ${error}`,
+        `DuckDB: Failed to load extension "${ext}": ${error}`
       );
     }
   }
@@ -1764,7 +1772,7 @@ async function autoLoadExtensions(
  * Show quick pick for managing extensions
  */
 async function showExtensionsQuickPick(
-  db: ReturnType<typeof getDuckDBService>,
+  db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
   const config = getWorkspaceConfig();
   const enabledExtensions = config.get<string[]>("extensions", []);
@@ -1773,7 +1781,7 @@ async function showExtensionsQuickPick(
   let loadedExtensions: string[] = [];
   try {
     loadedExtensions = await getLoadedExtensionsFromService((sql) =>
-      db.query(sql),
+      db.query(sql)
     );
   } catch {
     // Ignore errors
@@ -1809,7 +1817,7 @@ async function showExtensionsQuickPick(
       label: "Add Extension",
       kind: vscode.QuickPickItemKind.Separator,
       action: "none",
-    },
+    }
   );
 
   // Add common extensions (excluding already enabled)
@@ -1846,7 +1854,7 @@ async function showExtensionsQuickPick(
         try {
           await installAndLoadExtension(runFn, selected.extName);
           vscode.window.showInformationMessage(
-            `🦆 Loaded extension: ${selected.extName}`,
+            `🦆 Loaded extension: ${selected.extName}`
           );
         } catch (error) {
           vscode.window.showErrorMessage(`Failed to load extension: ${error}`);
@@ -1859,7 +1867,7 @@ async function showExtensionsQuickPick(
       if (selected.extName) {
         await removeExtensionFromSettings(selected.extName);
         vscode.window.showInformationMessage(
-          `🦆 Removed extension: ${selected.extName} (restart to unload)`,
+          `🦆 Removed extension: ${selected.extName} (restart to unload)`
         );
       }
       break;
@@ -1875,7 +1883,7 @@ async function showExtensionsQuickPick(
         try {
           await installAndLoadExtension(runFn, extName);
           vscode.window.showInformationMessage(
-            `🦆 Loaded extension: ${extName}`,
+            `🦆 Loaded extension: ${extName}`
           );
         } catch (error) {
           vscode.window.showErrorMessage(`Failed to load extension: ${error}`);

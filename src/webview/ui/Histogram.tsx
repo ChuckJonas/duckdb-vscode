@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { formatCount, formatAxisNumber } from '../utils/format';
 
 export interface HistogramBin {
   bucket: string;
@@ -32,52 +33,34 @@ export function Histogram({ data, highlightValue, highlightRange, dataMin, dataM
       const parts = bucket.split('-');
       if (parts.length >= 2) {
         // Handle negative numbers: could be "start-end" or "-5-10" or "-5--2"
-        let start: string, end: string;
+        let start: string;
         if (bucket.startsWith('-')) {
           // Starts with negative
           if (parts.length === 3) {
-            // "-5-10" -> ["-5", "10"]
             start = '-' + parts[1];
-            end = parts[2];
           } else if (parts.length === 4) {
-            // "-5--2" -> ["-5", "-2"]
             start = '-' + parts[1];
-            end = '-' + parts[3];
           } else {
             start = parts[0];
-            end = parts[1];
           }
         } else {
           start = parts[0];
-          end = parts.slice(1).join('-'); // Handle negative end
         }
         
         const startNum = parseFloat(start);
-        const endNum = parseFloat(end);
         
         if (!isNaN(startNum)) {
-          return formatNumber(startNum);
+          return formatAxisNumber(startNum);
         }
       }
     }
     
     const num = parseFloat(bucket);
     if (!isNaN(num)) {
-      return formatNumber(num);
+      return formatAxisNumber(num);
     }
     // Truncate long strings
     return bucket.length > 8 ? bucket.slice(0, 6) + '…' : bucket;
-  };
-  
-  // Format a number for axis labels (2 decimal places)
-  const formatNumber = (num: number): string => {
-    if (Math.abs(num) >= 1000000) {
-      return (num / 1000000).toFixed(2) + 'M';
-    }
-    if (Math.abs(num) >= 1000) {
-      return (num / 1000).toFixed(2) + 'K';
-    }
-    return num.toFixed(2);
   };
   
   // Get start value from bucket range "start-end"
@@ -87,7 +70,7 @@ export function Histogram({ data, highlightValue, highlightRange, dataMin, dataM
       // Handle negative numbers
       let start = bucket.startsWith('-') ? '-' + parts[1] : parts[0];
       const num = parseFloat(start);
-      if (!isNaN(num)) return formatNumber(num);
+      if (!isNaN(num)) return formatAxisNumber(num);
     }
     return bucket;
   };
@@ -95,7 +78,7 @@ export function Histogram({ data, highlightValue, highlightRange, dataMin, dataM
   // Get end value from bucket range "start-end"  
   const formatBucketEnd = (bucket: string): string => {
     const num = parseBucketEnd(bucket);
-    if (num !== null) return formatNumber(num);
+    if (num !== null) return formatAxisNumber(num);
     return bucket;
   };
   
@@ -119,17 +102,6 @@ export function Histogram({ data, highlightValue, highlightRange, dataMin, dataM
       if (!isNaN(num)) return num;
     }
     return null;
-  };
-  
-  // Format count for display
-  const formatCount = (count: number): string => {
-    if (count >= 1000000) {
-      return (count / 1000000).toFixed(1) + 'M';
-    }
-    if (count >= 1000) {
-      return (count / 1000).toFixed(1) + 'K';
-    }
-    return count.toString();
   };
   
   return (
@@ -167,21 +139,12 @@ export function Histogram({ data, highlightValue, highlightRange, dataMin, dataM
           ))}
           
           {/* Highlight line for stat hover */}
-          {(() => {
-            const shouldShow = highlightValue !== null && highlightValue !== undefined && dataMin !== undefined && dataMax !== undefined && dataMax !== dataMin;
-            console.log('🦆 Histogram highlight check:', { highlightValue, dataMin, dataMax, shouldShow });
-            if (shouldShow) {
-              const leftPct = ((highlightValue - dataMin!) / (dataMax! - dataMin!)) * 100;
-              console.log('🦆 Rendering highlight at:', leftPct + '%');
-              return (
-                <div 
-                  className="histogram-stat-highlight"
-                  style={{ left: `${leftPct}%` }}
-                />
-              );
-            }
-            return null;
-          })()}
+          {highlightValue !== null && highlightValue !== undefined && dataMin !== undefined && dataMax !== undefined && dataMax !== dataMin && (
+            <div 
+              className="histogram-stat-highlight"
+              style={{ left: `${((highlightValue - dataMin) / (dataMax - dataMin)) * 100}%` }}
+            />
+          )}
           
           {/* Highlight range for IQR */}
           {highlightRange !== null && highlightRange !== undefined && dataMin !== undefined && dataMax !== undefined && dataMax !== dataMin && (

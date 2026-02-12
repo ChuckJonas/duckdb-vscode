@@ -68,27 +68,6 @@ export interface MultiQueryResultWithPages {
   totalExecutionTime: number;
 }
 
-// Legacy types for backward compatibility
-export interface QueryResult {
-  sql: string;
-  columns: string[];
-  columnTypes: string[];
-  rows: Record<string, unknown>[];
-  rowCount: number;
-  executionTime: number;
-}
-
-export interface StatementResult {
-  sql: string;
-  statementIndex: number;
-  columns: string[];
-  columnTypes: string[];
-  rows: Record<string, unknown>[];
-  rowCount: number;
-  executionTime: number;
-  hasResults: boolean;
-}
-
 /**
  * Column statistics returned by getCacheColumnStats
  */
@@ -124,11 +103,6 @@ export interface ColumnStats {
   };
 }
 
-export interface MultiQueryResult {
-  statements: StatementResult[];
-  totalExecutionTime: number;
-}
-
 // ============================================================================
 // SQL BUILDERS
 // ============================================================================
@@ -140,7 +114,7 @@ export interface MultiQueryResult {
 export function buildSummarizeSql(
   database: string,
   schema: string,
-  tableName: string,
+  tableName: string
 ): string {
   const qualifiedName = `"${database}"."${schema}"."${tableName}"`;
   return `SELECT * FROM (SUMMARIZE ${qualifiedName})`;
@@ -191,7 +165,7 @@ export interface DuckDBError {
 export function parseDuckDBError(
   errorMessage: string,
   sql?: string,
-  statementIndex?: number,
+  statementIndex?: number
 ): DuckDBError {
   console.log("🦆 Parsing error message:", errorMessage);
 
@@ -261,7 +235,7 @@ export function parseDuckDBError(
  */
 export function offsetToLineColumn(
   text: string,
-  offset: number,
+  offset: number
 ): { line: number; column: number } {
   let line = 1;
   let lastNewline = -1;
@@ -381,7 +355,7 @@ export class DuckDBService {
    */
   async executeQuery(
     sql: string,
-    pageSize: number,
+    pageSize: number
   ): Promise<MultiQueryResultWithPages> {
     await this.initialize();
 
@@ -421,7 +395,7 @@ export class DuckDBService {
             stmtSql,
             i,
             pageSize,
-            stmtStartTime,
+            stmtStartTime
           );
           results.push(result);
         } else if (stmtType === "utility") {
@@ -430,7 +404,7 @@ export class DuckDBService {
             stmtSql,
             i,
             pageSize,
-            stmtStartTime,
+            stmtStartTime
           );
           results.push(result);
         } else {
@@ -439,7 +413,7 @@ export class DuckDBService {
             stmtSql,
             i,
             pageSize,
-            stmtStartTime,
+            stmtStartTime
           );
           results.push(result);
         }
@@ -492,7 +466,7 @@ export class DuckDBService {
     sql: string,
     statementIndex: number,
     pageSize: number,
-    startTime: number,
+    startTime: number
   ): Promise<{ meta: StatementCacheMeta; page: PageData }> {
     if (!this.connection) throw new Error("No connection");
 
@@ -506,13 +480,13 @@ export class DuckDBService {
 
       // Get metadata
       const countResult = await this.connection.runAndReadAll(
-        `SELECT COUNT(*) as cnt FROM "${cacheId}"`,
+        `SELECT COUNT(*) as cnt FROM "${cacheId}"`
       );
       const totalRows = Number(countResult.getRowObjectsJS()[0].cnt);
 
       // Get column info
       const schemaResult = await this.connection.runAndReadAll(
-        `DESCRIBE "${cacheId}"`,
+        `DESCRIBE "${cacheId}"`
       );
       const schemaRows = schemaResult.getRowObjectsJS();
       const columns = schemaRows.map((r) => String(r.column_name));
@@ -547,7 +521,7 @@ export class DuckDBService {
     sql: string,
     statementIndex: number,
     pageSize: number,
-    startTime: number,
+    startTime: number
   ): Promise<{ meta: StatementCacheMeta; page: PageData }> {
     if (!this.connection) throw new Error("No connection");
 
@@ -556,7 +530,7 @@ export class DuckDBService {
     const columnTypes = reader.columnTypes().map((t) => t.toString());
     const rawRows = reader.getRowObjectsJS();
     const rows = rawRows.map((row) =>
-      serializeRow(row as Record<string, unknown>, columns),
+      serializeRow(row as Record<string, unknown>, columns)
     );
 
     const executionTime = performance.now() - startTime;
@@ -591,7 +565,7 @@ export class DuckDBService {
     sql: string,
     statementIndex: number,
     pageSize: number,
-    startTime: number,
+    startTime: number
   ): Promise<{ meta: StatementCacheMeta; page: PageData }> {
     if (!this.connection) throw new Error("No connection");
 
@@ -631,7 +605,7 @@ export class DuckDBService {
     pageSize: number,
     sortColumn?: string,
     sortDirection?: "asc" | "desc",
-    whereClause?: string,
+    whereClause?: string
   ): Promise<PageData> {
     await this.initialize();
 
@@ -665,7 +639,7 @@ export class DuckDBService {
       const columns = reader.columnNames();
       const rawRows = reader.getRowObjectsJS();
       const rows = rawRows.map((row) =>
-        serializeRow(row as Record<string, unknown>, columns),
+        serializeRow(row as Record<string, unknown>, columns)
       );
 
       // Get total rows (with filter applied)
@@ -699,7 +673,7 @@ export class DuckDBService {
     cacheId: string,
     column: string,
     limit: number = 100,
-    searchTerm?: string,
+    searchTerm?: string
   ): Promise<{ value: string; count: number }[]> {
     await this.initialize();
 
@@ -761,7 +735,7 @@ export class DuckDBService {
       const sql = `SELECT COUNT(DISTINCT "${column}") as cardinality FROM "${cacheId}"`;
       const reader = await this.connection.runAndReadAll(sql);
       return Number(
-        (reader.getRowObjectsJS()[0] as Record<string, unknown>).cardinality,
+        (reader.getRowObjectsJS()[0] as Record<string, unknown>).cardinality
       );
     } catch {
       return 0;
@@ -780,7 +754,7 @@ export class DuckDBService {
     maxRows?: number,
     sortColumn?: string,
     sortDirection?: "asc" | "desc",
-    whereClause?: string,
+    whereClause?: string
   ): Promise<void> {
     await this.initialize();
 
@@ -825,7 +799,10 @@ export class DuckDBService {
           throw new Error(`Unsupported format: ${format}`);
       }
 
-      const copySql = `COPY (${innerSql}) TO '${filePath.replace(/'/g, "''")}' (${copyOptions})`;
+      const copySql = `COPY (${innerSql}) TO '${filePath.replace(
+        /'/g,
+        "''"
+      )}' (${copyOptions})`;
       await this.connection.run(copySql);
     } catch (err) {
       const error = err as Error;
@@ -840,7 +817,7 @@ export class DuckDBService {
     cacheId: string,
     maxRows: number,
     sortColumn?: string,
-    sortDirection?: "asc" | "desc",
+    sortDirection?: "asc" | "desc"
   ): Promise<{ columns: string[]; rows: Record<string, unknown>[] }> {
     await this.initialize();
 
@@ -864,7 +841,7 @@ export class DuckDBService {
       const columns = reader.columnNames();
       const rawRows = reader.getRowObjectsJS();
       const rows = rawRows.map((row) =>
-        serializeRow(row as Record<string, unknown>, columns),
+        serializeRow(row as Record<string, unknown>, columns)
       );
 
       return { columns, rows };
@@ -881,7 +858,7 @@ export class DuckDBService {
   async getCacheColumnStats(
     cacheId: string,
     column: string,
-    whereClause?: string,
+    whereClause?: string
   ): Promise<ColumnStats> {
     await this.initialize();
 
@@ -928,7 +905,9 @@ export class DuckDBService {
           ELSE 'string'
         END as col_type
       FROM "${cacheId}" 
-      WHERE ${escapedCol} IS NOT NULL ${whereClause ? `AND (${whereClause})` : ""}
+      WHERE ${escapedCol} IS NOT NULL ${
+      whereClause ? `AND (${whereClause})` : ""
+    }
       LIMIT 1
     `;
     const typeCheckReader = await this.connection.runAndReadAll(typeCheckSql);
@@ -974,7 +953,7 @@ export class DuckDBService {
     stats: ColumnStats,
     cacheId: string,
     escapedCol: string,
-    whereClause?: string,
+    whereClause?: string
   ): Promise<void> {
     if (!this.connection) return;
 
@@ -1076,7 +1055,7 @@ export class DuckDBService {
       stats.histogram = histRows.map((row) => ({
         bucket: formatHistogramBucket(
           Number(row.bin_start),
-          Number(row.bin_end),
+          Number(row.bin_end)
         ),
         count: Number(row.count),
       }));
@@ -1092,7 +1071,7 @@ export class DuckDBService {
     stats: ColumnStats,
     cacheId: string,
     escapedCol: string,
-    whereClause?: string,
+    whereClause?: string
   ): Promise<void> {
     if (!this.connection) return;
 
@@ -1150,7 +1129,7 @@ export class DuckDBService {
     stats: ColumnStats,
     cacheId: string,
     escapedCol: string,
-    whereClause?: string,
+    whereClause?: string
   ): Promise<void> {
     if (!this.connection) return;
 
@@ -1184,7 +1163,7 @@ export class DuckDBService {
       // Calculate span in days
       const spanDays = Math.max(
         1,
-        (maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24),
+        (maxDate.getTime() - minDate.getTime()) / (1000 * 60 * 60 * 24)
       );
 
       // Determine appropriate granularity based on span
@@ -1257,7 +1236,7 @@ export class DuckDBService {
    * Returns distinct count, null percentage, and column type for each column.
    */
   async getCacheColumnSummaries(
-    cacheId: string,
+    cacheId: string
   ): Promise<Record<string, unknown>[]> {
     await this.initialize();
 
@@ -1346,7 +1325,7 @@ export class DuckDBService {
     const columns = reader.columnNames();
     const rawRows = reader.getRowObjectsJS();
     return rawRows.map((row) =>
-      serializeRow(row as Record<string, unknown>, columns),
+      serializeRow(row as Record<string, unknown>, columns)
     );
   }
 
@@ -1384,7 +1363,7 @@ function formatHistogramBucket(binStart: number, binEnd: number): string {
 
 export function splitSqlStatements(
   sql: string,
-  expectedCount: number,
+  expectedCount: number
 ): string[] {
   const statements: string[] = [];
   let i = 0;
@@ -1504,7 +1483,7 @@ export function splitSqlStatements(
  */
 function serializeRow(
   row: Record<string, unknown>,
-  columns: string[],
+  columns: string[]
 ): Record<string, unknown> {
   const result: Record<string, unknown> = {};
 

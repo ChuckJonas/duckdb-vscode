@@ -25,7 +25,7 @@ export interface PageData {
   pageSize: number;
   totalRows: number;
   sortColumn?: string;
-  sortDirection?: 'asc' | 'desc';
+  sortDirection?: "asc" | "desc";
 }
 
 /**
@@ -67,7 +67,7 @@ export interface MultiQueryResultWithPages {
 
 export interface ColumnStats {
   column: string;
-  type: 'numeric' | 'string' | 'date';
+  type: "numeric" | "string" | "date";
   total: number;
   nonNull: number;
   nullCount: number;
@@ -80,48 +80,19 @@ export interface ColumnStats {
   quantiles?: {
     q05?: number;
     q25?: number;
-    q50?: number;  // median
+    q50?: number; // median
     q75?: number;
     q95?: number;
   };
   histogram?: { bucket: string; count: number }[];
   // String-specific
-  topValues?: { value: string; count: number; type: 'top_n' | 'other' }[];
+  topValues?: { value: string; count: number; type: "top_n" | "other" }[];
   // Date/Timestamp-specific
   timeseries?: {
     bins: { date: string; count: number }[];
     minDate: string;
     maxDate: string;
-    granularity: 'day' | 'week' | 'month' | 'quarter' | 'year';
+    granularity: "day" | "week" | "month" | "quarter" | "year";
     totalCount: number;
   };
-}
-
-// ============================================================================
-// LEGACY TYPES (For backward compatibility during transition)
-// ============================================================================
-
-export interface QueryResult {
-  sql: string;
-  columns: string[];
-  columnTypes: string[];
-  rows: Record<string, unknown>[];
-  rowCount: number;
-  executionTime: number;
-}
-
-export interface StatementResult {
-  sql: string;
-  statementIndex: number;
-  columns: string[];
-  columnTypes: string[];
-  rows: Record<string, unknown>[];
-  rowCount: number;
-  executionTime: number;
-  hasResults: boolean;
-}
-
-export interface MultiQueryResult {
-  statements: StatementResult[];
-  totalExecutionTime: number;
 }
