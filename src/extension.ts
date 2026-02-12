@@ -63,6 +63,7 @@ import {
   getLoadedExtensions as getLoadedExtensionsFromService,
   COMMON_EXTENSIONS,
 } from "./services/extensionsService";
+import { registerSqlFormatter } from "./providers/SqlFormattingProvider";
 
 // Current database state
 let currentDatabase = "memory";
@@ -1514,6 +1515,9 @@ export async function activate(context: vscode.ExtensionContext) {
   // Register SQL CodeLens provider for run actions
   setGetCurrentDatabase(() => currentDatabase);
   codeLensProvider = registerSqlCodeLens(context);
+
+  // Register SQL formatting provider (Format Document / Format Selection)
+  registerSqlFormatter(context);
 
   // Register "Go to Source" command for results panel
   const goToSourceCmd = vscode.commands.registerCommand(

@@ -599,6 +599,49 @@
           "type": "boolean",
           "default": true,
           "description": "Enable SQL autocomplete suggestions"
+        },
+        "duckdb.format.keywordCase": {
+          "type": "string",
+          "enum": [
+            "upper",
+            "lower",
+            "preserve"
+          ],
+          "default": "upper",
+          "enumDescriptions": [
+            "Uppercase keywords (SELECT, FROM, WHERE)",
+            "Lowercase keywords (select, from, where)",
+            "Preserve original keyword casing"
+          ],
+          "description": "Keyword casing style for SQL formatting"
+        },
+        "duckdb.format.indentStyle": {
+          "type": "string",
+          "enum": [
+            "standard",
+            "tabularLeft",
+            "tabularRight"
+          ],
+          "default": "standard",
+          "enumDescriptions": [
+            "Standard indentation",
+            "Tabular style, keywords left-aligned",
+            "Tabular style, keywords right-aligned"
+          ],
+          "description": "Indentation style for SQL formatting"
+        },
+        "duckdb.format.logicalOperatorNewline": {
+          "type": "string",
+          "enum": [
+            "before",
+            "after"
+          ],
+          "default": "before",
+          "enumDescriptions": [
+            "Place AND/OR before the newline",
+            "Place AND/OR after the newline"
+          ],
+          "description": "Where to place logical operators (AND, OR) relative to newlines"
         }
       }
     }
@@ -616,7 +659,6 @@
   },
   "devDependencies": {
     "@types/mocha": "^10.0.10",
-    "tsx": "^4.19.0",
     "@types/node": "22.x",
     "@types/react": "^19.2.9",
     "@types/react-dom": "^19.2.3",
@@ -627,6 +669,7 @@
     "esbuild": "^0.27.2",
     "esbuild-plugin-copy": "^2.1.1",
     "eslint": "^9.39.2",
+    "tsx": "^4.19.0",
     "typescript": "^5.9.3",
     "typescript-eslint": "^8.52.0"
   },
@@ -634,6 +677,7 @@
     "@duckdb/node-api": "^1.4.3-r.3",
     "lucide-react": "^0.563.0",
     "react": "^19.2.3",
-    "react-dom": "^19.2.3"
+    "react-dom": "^19.2.3",
+    "sql-formatter": "^15.7.0"
   }
 }
