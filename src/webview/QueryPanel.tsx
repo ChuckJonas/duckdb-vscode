@@ -6,6 +6,12 @@ import type {
 } from './types';
 import { ResultsTable } from './ResultsTable';
 import { Toggle } from './ui/Toggle';
+import { RefreshCw } from 'lucide-react';
+
+// Get VS Code API (exposed globally from index.tsx)
+function getVscodeApi() {
+  return (window as unknown as { vscodeApi: { postMessage: (msg: unknown) => void } }).vscodeApi;
+}
 
 interface QueryPanelProps {
   result: MultiQueryResultWithPages;
@@ -66,6 +72,25 @@ function MultiStatementContainer({
   pageSize,
   maxCopyRows,
 }: MultiStatementContainerProps) {
+  // Refresh state
+  const [isRefreshing, setIsRefreshing] = useState(false);
+
+  const handleRefresh = useCallback(() => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    const vscode = getVscodeApi();
+    if (vscode) {
+      vscode.postMessage({ type: 'refreshQuery' });
+    } else {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing]);
+
+  // Reset refresh state when statements change (new results arrived)
+  useEffect(() => {
+    setIsRefreshing(false);
+  }, [statements]);
+
   // Track which statements are expanded (by statementIndex)
   const [expandedSet, setExpandedSet] = useState<Set<number>>(() => {
     // Default: expand the last statement with results
@@ -148,6 +173,14 @@ function MultiStatementContainer({
           )}
           <button className="multi-results-btn" onClick={expandAll}>Expand All</button>
           <button className="multi-results-btn" onClick={collapseAll}>Collapse All</button>
+          <button
+            className={`refresh-btn ${isRefreshing ? 'refreshing' : ''}`}
+            onClick={handleRefresh}
+            disabled={isRefreshing}
+            title="Re-run all queries"
+          >
+            <RefreshCw size={13} />
+          </button>
         </div>
       </div>
 

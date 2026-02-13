@@ -634,6 +634,43 @@ body {
   font-variant-numeric: tabular-nums;
 }
 
+/* Refresh Button */
+.refresh-btn {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 22px;
+  height: 22px;
+  padding: 0;
+  background: none;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  color: var(--text-muted);
+  cursor: pointer;
+  transition: all 0.15s ease;
+  flex-shrink: 0;
+}
+
+.refresh-btn:hover {
+  color: var(--text-primary);
+  background: var(--bg-hover);
+  border-color: var(--border);
+}
+
+.refresh-btn:disabled {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.refresh-btn.refreshing svg {
+  animation: spin 0.8s linear infinite;
+}
+
+@keyframes spin {
+  from { transform: rotate(0deg); }
+  to { transform: rotate(360deg); }
+}
+
 /* Stats Bar */
 .stats-bar {
   display: flex;

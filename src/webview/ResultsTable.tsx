@@ -15,7 +15,7 @@ import {
 } from './ui/FilterBar';
 import { ColumnFilterPopover } from './ui/ColumnFilterPopover';
 import { formatValue, formatTableAsText } from './utils/format';
-import { Copy, Download, ExternalLink, ChevronDown, Filter, Code, BarChart2, ArrowUp, ArrowDown, ChevronsUpDown } from 'lucide-react';
+import { Copy, Download, ExternalLink, ChevronDown, Filter, Code, BarChart2, ArrowUp, ArrowDown, ChevronsUpDown, RefreshCw } from 'lucide-react';
 import './styles.css';
 
 // Get VS Code API (exposed globally from index.tsx)
@@ -121,6 +121,9 @@ export function ResultsTable({
   // Copy loading state
   const [copyLoading, setCopyLoading] = useState(false);
   
+  // Refresh state
+  const [isRefreshing, setIsRefreshing] = useState(false);
+  
   // Table wrapper ref
   const tableWrapperRef = useRef<HTMLDivElement>(null);
 
@@ -140,6 +143,8 @@ export function ResultsTable({
     setDistinctValues([]);
     setColumnCardinality(0);
     setFilterPopover(null);
+    // Reset refresh state
+    setIsRefreshing(false);
   }, [cacheId]);
 
   // Pagination helpers
@@ -206,6 +211,9 @@ export function ResultsTable({
             setToast('Failed to copy');
           });
         }
+      } else if (message.type === 'refreshError') {
+        setIsRefreshing(false);
+        setToast(message.error || 'Refresh failed');
       }
     };
     window.addEventListener('message', handleMessage);
@@ -432,6 +440,18 @@ export function ResultsTable({
       setCopyLoading(false);
     }
   }, [cacheId, copyLoading]);
+
+  // Handle refresh - re-execute original query
+  const handleRefresh = useCallback(() => {
+    if (isRefreshing) return;
+    setIsRefreshing(true);
+    const vscode = getVscodeApi();
+    if (vscode) {
+      vscode.postMessage({ type: 'refreshQuery' });
+    } else {
+      setIsRefreshing(false);
+    }
+  }, [isRefreshing]);
 
   // Selection helpers (work on current page)
   const isCellSelected = useCallback((rowIdx: number, colIdx: number): boolean => {
@@ -719,6 +739,14 @@ export function ResultsTable({
             <span className="query-success">✓ success</span>
           )}
           <span className="query-time">{executionTime.toFixed(1)}ms</span>
+          <button
+            className={`refresh-btn ${isRefreshing ? 'refreshing' : ''}`}
+            onClick={(e) => { e.stopPropagation(); handleRefresh(); }}
+            disabled={isRefreshing}
+            title="Re-run original query"
+          >
+            <RefreshCw size={13} />
+          </button>
         </span>
       </div>
 

@@ -374,6 +374,10 @@ function setupMessageHandler(
         case "requestDistinctValues":
           await handleRequestDistinctValues(panel, message, db);
           break;
+
+        case "refreshQuery":
+          await handleRefreshQuery(panel, sourceId, pageSize, maxCopyRows, db);
+          break;
       }
     },
     undefined,
@@ -594,6 +598,66 @@ async function handleRequestColumnSummaries(
       type: "columnSummaries",
       cacheId,
       data: [],
+      error: String(error),
+    });
+  }
+}
+
+/**
+ * Handle 'refreshQuery' message - re-execute the original queries
+ * Drops old caches, re-runs the original SQL, and sends new results
+ */
+async function handleRefreshQuery(
+  panel: vscode.WebviewPanel,
+  sourceId: string | undefined,
+  pageSize: number,
+  maxCopyRows: number,
+  db: ReturnType<typeof getDuckDBService>
+): Promise<void> {
+  const currentState = sourceId ? resultPanels.get(sourceId) ?? null : null;
+
+  if (!currentState) {
+    panel.webview.postMessage({
+      type: "refreshError",
+      error: "No query state available to refresh",
+    });
+    return;
+  }
+
+  // Reconstruct the original SQL from stored queries
+  const fullSql = currentState.queries.join(";\n");
+
+  try {
+    // Drop old caches before re-executing
+    for (const cacheId of currentState.cacheIds) {
+      db.dropCache(cacheId).catch(() => {});
+    }
+
+    // Re-execute the original query
+    const result = await db.executeQuery(fullSql, pageSize);
+
+    // Update panel state
+    const newCacheIds = collectCacheIds(result);
+    currentState.cacheIds = newCacheIds;
+    currentState.currentResult = result;
+    currentState.sortColumn = undefined;
+    currentState.sortDirection = undefined;
+    currentState.queries = result.statements.map((s) => s.meta.sql);
+
+    // Update panel title
+    panel.title = buildPanelTitle(result);
+
+    // Send new results to webview
+    panel.webview.postMessage({
+      type: "queryResult",
+      data: result,
+      pageSize,
+      maxCopyRows,
+    });
+  } catch (error) {
+    console.error("🦆 Failed to refresh query:", error);
+    panel.webview.postMessage({
+      type: "refreshError",
       error: String(error),
     });
   }

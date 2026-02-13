@@ -2,7 +2,7 @@
   "name": "duckdb",
   "displayName": "DuckDB",
   "description": "A DuckDB client for VS Code",
-  "version": "0.0.10",
+  "version": "0.0.11",
   "publisher": "chuckjonas",
   "icon": "resources/icon.png",
   "repository": {
