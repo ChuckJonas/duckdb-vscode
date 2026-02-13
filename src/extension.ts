@@ -64,6 +64,12 @@ import {
   COMMON_EXTENSIONS,
 } from "./services/extensionsService";
 import { registerSqlFormatter } from "./providers/SqlFormattingProvider";
+import {
+  showExecutionDecorations,
+  showErrorDecoration,
+  mapStatementsToLines,
+  disposeDecorations,
+} from "./services/inlineDecorationService";
 
 // Current database state
 let currentDatabase = "memory";
@@ -130,6 +136,90 @@ function showErrorDiagnostic(
  */
 function clearDiagnostics(document: vscode.TextDocument): void {
   diagnosticCollection.delete(document.uri);
+}
+
+// ============================================================================
+// Shared helpers for inline execution feedback
+// ============================================================================
+
+/**
+ * Show inline success decorations for non-result (DDL/DML) statements.
+ */
+function showSuccessDecorations(
+  editor: vscode.TextEditor,
+  sql: string,
+  sqlStartOffset: number,
+  statements: Array<{
+    meta: { sql: string; executionTime: number; hasResults: boolean };
+  }>
+): void {
+  const nonResultStmts = statements.filter((s) => !s.meta.hasResults);
+  if (nonResultStmts.length === 0) {
+    return;
+  }
+  const decorationResults = mapStatementsToLines(
+    sql,
+    sqlStartOffset,
+    nonResultStmts,
+    editor.document
+  );
+  showExecutionDecorations(editor, decorationResults);
+}
+
+/**
+ * Compute the editor line for a DuckDB error, using the best available info.
+ */
+function computeErrorLine(
+  errInfo: DuckDBError,
+  document: vscode.TextDocument,
+  sqlStartOffset: number,
+  fallbackLine: number
+): number {
+  if (errInfo.line !== undefined) {
+    return Math.max(0, errInfo.line - 1); // 1-indexed → 0-indexed
+  }
+  if (errInfo.position !== undefined) {
+    return document.positionAt(sqlStartOffset + errInfo.position).line;
+  }
+  return fallbackLine;
+}
+
+/**
+ * Handle a DuckDBQueryError: show diagnostic, notification, inline error
+ * decoration, and success decorations for any partially completed statements.
+ */
+function handleDuckDBError(
+  error: DuckDBQueryError,
+  editor: vscode.TextEditor,
+  sql: string,
+  sqlStartOffset: number,
+  fallbackLine: number
+): void {
+  const errInfo = error.duckdbError;
+
+  showErrorDiagnostic(editor.document, errInfo, sqlStartOffset);
+  vscode.window.showErrorMessage(
+    `DuckDB ${errInfo.type} Error: ${errInfo.message}`
+  );
+
+  // Inline error decoration
+  const errorLine = computeErrorLine(
+    errInfo,
+    editor.document,
+    sqlStartOffset,
+    fallbackLine
+  );
+  showErrorDecoration(editor, errorLine, errInfo.type, errInfo.message);
+
+  // Success decorations for statements that completed before the error
+  if (error.partialResults) {
+    showSuccessDecorations(
+      editor,
+      sql,
+      sqlStartOffset,
+      error.partialResults.statements
+    );
+  }
 }
 
 export async function activate(context: vscode.ExtensionContext) {
@@ -233,6 +323,7 @@ export async function activate(context: vscode.ExtensionContext) {
         const result = await db.executeQuery(sql, pageSize);
         const sourceId = editor.document.uri.toString();
         showResultsPanel(result, context, sourceId, pageSize, getMaxCopyRows());
+        showSuccessDecorations(editor, sql, sqlStartOffset, result.statements);
 
         // Record in history - use totals from all statements
         const dbName = await getCurrentDatabase(async (s) => ({
@@ -273,20 +364,11 @@ export async function activate(context: vscode.ExtensionContext) {
           sourceFile: editor.document.uri.toString(),
         });
 
-        // Show error as inline diagnostic if it's a DuckDB error with location info
         if (error instanceof DuckDBQueryError) {
-          console.log(
-            "🦆 DuckDB Error:",
-            JSON.stringify(error.duckdbError, null, 2)
-          );
-          showErrorDiagnostic(
-            editor.document,
-            error.duckdbError,
-            sqlStartOffset
-          );
-          vscode.window.showErrorMessage(
-            `DuckDB ${error.duckdbError.type} Error: ${error.duckdbError.message}`
-          );
+          const fallbackLine = editor.selection.isEmpty
+            ? 0
+            : editor.selection.start.line;
+          handleDuckDBError(error, editor, sql, sqlStartOffset, fallbackLine);
         } else {
           console.log("🦆 Non-DuckDB Error:", error);
           vscode.window.showErrorMessage(`${error}`);
@@ -318,6 +400,20 @@ export async function activate(context: vscode.ExtensionContext) {
         const result = await db.executeQuery(sql, pageSize);
         const sourceId = uri.toString(); // Use document URI to reuse panel per file
         showResultsPanel(result, context, sourceId, pageSize, getMaxCopyRows());
+
+        // Show inline decorations for non-result statements (DDL/DML)
+        const activeEditor = vscode.window.activeTextEditor;
+        if (
+          activeEditor &&
+          activeEditor.document.uri.toString() === uri.toString()
+        ) {
+          showSuccessDecorations(
+            activeEditor,
+            sql,
+            startOffset,
+            result.statements
+          );
+        }
 
         // Record in history
         const dbName = await getCurrentDatabase(async (s) => ({
@@ -355,16 +451,27 @@ export async function activate(context: vscode.ExtensionContext) {
           sourceFile: uri.toString(),
         });
 
-        // Show error as inline diagnostic
         if (error instanceof DuckDBQueryError) {
-          console.log(
-            "🦆 DuckDB Error (statement):",
-            JSON.stringify(error.duckdbError, null, 2)
-          );
-          showErrorDiagnostic(document, error.duckdbError, startOffset);
-          vscode.window.showErrorMessage(
-            `DuckDB ${error.duckdbError.type} Error: ${error.duckdbError.message}`
-          );
+          const activeEditor = vscode.window.activeTextEditor;
+          if (
+            activeEditor &&
+            activeEditor.document.uri.toString() === uri.toString()
+          ) {
+            const fallbackLine = document.positionAt(startOffset).line;
+            handleDuckDBError(
+              error,
+              activeEditor,
+              sql,
+              startOffset,
+              fallbackLine
+            );
+          } else {
+            // No matching editor — still show diagnostic + notification
+            showErrorDiagnostic(document, error.duckdbError, startOffset);
+            vscode.window.showErrorMessage(
+              `DuckDB ${error.duckdbError.type} Error: ${error.duckdbError.message}`
+            );
+          }
         } else {
           console.log("🦆 Non-DuckDB Error (statement):", error);
           vscode.window.showErrorMessage(`${error}`);
@@ -1608,6 +1715,7 @@ export async function activate(context: vscode.ExtensionContext) {
 }
 
 export async function deactivate() {
+  disposeDecorations();
   await disposeDuckDBService();
 }
 

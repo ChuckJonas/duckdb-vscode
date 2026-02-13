@@ -61,6 +61,21 @@ export function showResultsPanel(
   pageSize: number,
   maxCopyRows: number
 ): void {
+  // If no statement produces tabular results (all DDL/DML), skip the panel.
+  // Show a subtle status bar message as fallback for call sites without an editor
+  // (e.g. history re-run). Call sites with an editor show inline decorations instead.
+  const hasAnyResults = result.statements.some((s) => s.meta.hasResults);
+  if (!hasAnyResults) {
+    const count = result.statements.length;
+    const time = result.totalExecutionTime.toFixed(1);
+    const msg =
+      count === 1
+        ? `$(check) Statement executed (${time}ms)`
+        : `$(check) ${count} statements executed (${time}ms)`;
+    vscode.window.setStatusBarMessage(msg, 5000);
+    return;
+  }
+
   const db = getDuckDBService();
   const title = buildPanelTitle(result);
   const cacheIds = collectCacheIds(result);
@@ -172,12 +187,17 @@ function buildPanelTitle(result: MultiQueryResultWithPages): string {
   const statementsWithResults = result.statements.filter(
     (s) => s.meta.hasResults
   );
-  const lastStmt = result.statements[result.statements.length - 1];
-  const displayRowCount = lastStmt?.meta.totalRows || 0;
 
-  return statementsWithResults.length > 1
-    ? `Results (${statementsWithResults.length} queries)`
-    : `Results (${displayRowCount.toLocaleString()} rows)`;
+  if (statementsWithResults.length > 1) {
+    return `Results (${statementsWithResults.length} queries)`;
+  }
+
+  // Use the last result-bearing statement's row count (not the absolute last,
+  // which could be a DDL/DML with 0 rows in a mixed batch).
+  const lastResultStmt =
+    statementsWithResults[statementsWithResults.length - 1];
+  const displayRowCount = lastResultStmt?.meta.totalRows || 0;
+  return `Results (${displayRowCount.toLocaleString()} rows)`;
 }
 
 /**

@@ -256,11 +256,14 @@ export function offsetToLineColumn(
  */
 export class DuckDBQueryError extends Error {
   public readonly duckdbError: DuckDBError;
+  /** Statements that completed successfully before the error (for multi-statement batches) */
+  public readonly partialResults?: MultiQueryResultWithPages;
 
-  constructor(error: DuckDBError) {
+  constructor(error: DuckDBError, partialResults?: MultiQueryResultWithPages) {
     super(error.message);
     this.name = "DuckDBQueryError";
     this.duckdbError = error;
+    this.partialResults = partialResults;
   }
 }
 
@@ -367,18 +370,26 @@ export class DuckDBService {
     const results: Array<{ meta: StatementCacheMeta; page: PageData }> = [];
 
     // Extract statements - this can fail with parser errors
-    let extracted;
+    let statementCount: number;
+    let sqlStatements: string[];
     try {
-      extracted = await this.connection.extractStatements(sql);
-    } catch (err) {
-      const error = err as Error;
-      // Parse the error and add location info
-      const parsed = parseDuckDBError(error.message, sql, 0);
-      throw new DuckDBQueryError(parsed);
-    }
+      const extracted = await this.connection.extractStatements(sql);
+      statementCount = extracted.count;
+      sqlStatements = splitSqlStatements(sql, statementCount);
+    } catch (extractErr) {
+      // extractStatements does full parsing and may reject the batch if any
+      // statement has a syntax error. Fall back to our own semicolon-based
+      // splitter so we can still execute the valid statements before the error.
+      sqlStatements = splitSqlStatements(sql, -1);
+      statementCount = sqlStatements.length;
 
-    const statementCount = extracted.count;
-    const sqlStatements = splitSqlStatements(sql, statementCount);
+      if (statementCount === 0) {
+        // Nothing to execute — surface the original parser error
+        const originalMsg = (extractErr as Error).message || "Syntax Error";
+        const parsed = parseDuckDBError(originalMsg, sql, 0);
+        throw new DuckDBQueryError(parsed);
+      }
+    }
 
     // Track cumulative offset for multi-statement error mapping
     let cumulativeOffset = 0;
@@ -435,7 +446,16 @@ export class DuckDBService {
         }
 
         parsed.sql = sql; // Full SQL for context
-        throw new DuckDBQueryError(parsed);
+
+        // Attach any statements that completed before the error
+        const partial =
+          results.length > 0
+            ? {
+                statements: [...results],
+                totalExecutionTime: performance.now() - totalStartTime,
+              }
+            : undefined;
+        throw new DuckDBQueryError(parsed, partial);
       }
 
       // Update cumulative offset for next statement
@@ -1463,6 +1483,11 @@ export function splitSqlStatements(
     .trim();
   if (finalWithoutComments.length > 0) {
     statements.push(finalStmt);
+  }
+
+  // If expectedCount < 0, caller wants all statements (fallback mode)
+  if (expectedCount < 0) {
+    return statements;
   }
 
   // Fallback if parsing doesn't match expected count
