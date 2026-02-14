@@ -40,7 +40,7 @@ type RunFn = (sql: string) => Promise<void>;
  * Get all attached databases
  */
 export async function getAttachedDatabases(
-  queryFn: QueryFn,
+  queryFn: QueryFn
 ): Promise<DatabaseInfo[]> {
   const result = await queryFn(`
     SELECT 
@@ -63,17 +63,47 @@ export async function getAttachedDatabases(
 }
 
 /**
+ * Get the list of user-configured ignored schemas
+ */
+export function getIgnoredSchemas(): string[] {
+  const config = getWorkspaceConfig();
+  return config.get<string[]>("explorer.ignoredSchemas", []);
+}
+
+/**
+ * Add a schema to the ignored list in workspace settings
+ */
+export async function addIgnoredSchema(schemaName: string): Promise<void> {
+  const config = getWorkspaceConfig();
+  const ignored = config.get<string[]>("explorer.ignoredSchemas", []);
+  if (!ignored.includes(schemaName)) {
+    ignored.push(schemaName);
+    await config.update(
+      "explorer.ignoredSchemas",
+      ignored,
+      vscode.ConfigurationTarget.Workspace
+    );
+  }
+}
+
+/**
  * Get all schemas in a database
  */
 export async function getSchemas(
   queryFn: QueryFn,
-  database: string,
+  database: string
 ): Promise<SchemaInfo[]> {
+  // Merge hardcoded exclusions with user-configured ignored schemas
+  const alwaysExcluded = ["pg_catalog", "information_schema"];
+  const userIgnored = getIgnoredSchemas();
+  const allExcluded = [...new Set([...alwaysExcluded, ...userIgnored])];
+  const excludeList = allExcluded.map((s) => `'${s}'`).join(", ");
+
   const result = await queryFn(`
     SELECT DISTINCT schema_name
     FROM information_schema.schemata
     WHERE catalog_name = '${database}'
-      AND schema_name NOT IN ('pg_catalog', 'information_schema')
+      AND schema_name NOT IN (${excludeList})
     ORDER BY schema_name
   `);
 
@@ -89,7 +119,7 @@ export async function getSchemas(
 export async function getTables(
   queryFn: QueryFn,
   database: string,
-  schema: string,
+  schema: string
 ): Promise<TableInfo[]> {
   // Get tables first
   const result = await queryFn(`
@@ -112,7 +142,7 @@ export async function getTables(
     let rowCount: number | undefined;
     try {
       const countResult = await queryFn(
-        `SELECT COUNT(*) as cnt FROM "${database}"."${schema}"."${tableName}"`,
+        `SELECT COUNT(*) as cnt FROM "${database}"."${schema}"."${tableName}"`
       );
       rowCount = countResult.rows[0]?.cnt as number;
     } catch {
@@ -135,7 +165,7 @@ export async function getTables(
  * Get loaded extensions
  */
 export async function getLoadedExtensions(
-  queryFn: QueryFn,
+  queryFn: QueryFn
 ): Promise<ExtensionInfo[]> {
   const result = await queryFn(`
     SELECT 
@@ -167,7 +197,7 @@ export async function getCurrentDatabase(queryFn: QueryFn): Promise<string> {
  */
 export async function switchDatabase(
   runFn: RunFn,
-  database: string,
+  database: string
 ): Promise<void> {
   await runFn(`USE "${database}"`);
 }
@@ -179,7 +209,7 @@ export async function attachDatabase(
   runFn: RunFn,
   path: string,
   alias: string,
-  readOnly: boolean = false,
+  readOnly: boolean = false
 ): Promise<void> {
   const mode = readOnly ? " (READ_ONLY)" : "";
   await runFn(`ATTACH '${path.replace(/'/g, "''")}' AS "${alias}"${mode}`);
@@ -190,7 +220,7 @@ export async function attachDatabase(
  */
 export async function detachDatabase(
   runFn: RunFn,
-  database: string,
+  database: string
 ): Promise<void> {
   await runFn(`DETACH "${database}"`);
 }
@@ -200,7 +230,7 @@ export async function detachDatabase(
  */
 export async function attachMemoryDatabase(
   runFn: RunFn,
-  alias: string,
+  alias: string
 ): Promise<void> {
   await runFn(`ATTACH ':memory:' AS "${alias}"`);
 }
@@ -212,7 +242,7 @@ export async function attachDatabaseAndUse(
   runFn: RunFn,
   filePath: string,
   alias: string,
-  readOnly: boolean = false,
+  readOnly: boolean = false
 ): Promise<void> {
   await attachDatabase(runFn, filePath, alias, readOnly);
   await switchDatabase(runFn, alias);
@@ -224,7 +254,7 @@ export async function attachDatabaseAndUse(
 export async function createSchema(
   runFn: RunFn,
   database: string,
-  schemaName: string,
+  schemaName: string
 ): Promise<void> {
   await runFn(`CREATE SCHEMA "${database}"."${schemaName}"`);
 }
@@ -237,7 +267,7 @@ export async function dropObject(
   objectType: "TABLE" | "VIEW",
   database: string,
   schema: string,
-  name: string,
+  name: string
 ): Promise<void> {
   const qualifiedName = `"${database}"."${schema}"."${name}"`;
   await runFn(`DROP ${objectType} ${qualifiedName}`);
@@ -261,7 +291,7 @@ export async function runManualSql(runFn: RunFn, sql: string): Promise<void> {
 export function buildDescribeSql(
   database: string,
   schema: string,
-  tableName: string,
+  tableName: string
 ): string {
   const qualifiedName = `"${database}"."${schema}"."${tableName}"`;
   return `SELECT * FROM (DESCRIBE ${qualifiedName})`;
@@ -272,7 +302,7 @@ export function buildDescribeSql(
  */
 export function buildCreateSchemaSql(
   database: string,
-  schemaName: string,
+  schemaName: string
 ): string {
   return `CREATE SCHEMA "${database}"."${schemaName}"`;
 }
@@ -284,7 +314,7 @@ export function buildDropSql(
   objectType: "TABLE" | "VIEW",
   database: string,
   schema: string,
-  name: string,
+  name: string
 ): string {
   const qualifiedName = `"${database}"."${schema}"."${name}"`;
   return `DROP ${objectType} ${qualifiedName}`;
@@ -297,7 +327,7 @@ export function buildSelectTopSql(
   database: string,
   schema: string,
   tableName: string,
-  limit: number = 100,
+  limit: number = 100
 ): string {
   const qualifiedName = `"${database}"."${schema}"."${tableName}"`;
   return `SELECT * FROM ${qualifiedName} LIMIT ${limit}`;
@@ -308,7 +338,7 @@ export function buildSelectTopSql(
  */
 export function buildNewTableBoilerplate(
   database: string,
-  schema: string,
+  schema: string
 ): string {
   return `USE "${database}";
 
@@ -325,7 +355,7 @@ CREATE TABLE "${schema}"."new_table" (
  */
 export function buildNewViewBoilerplate(
   database: string,
-  schema: string,
+  schema: string
 ): string {
   return `USE "${database}";
 
@@ -346,7 +376,7 @@ export function getWorkspaceConfig() {
 
 export async function updateWorkspaceConfig(
   key: string,
-  value: unknown,
+  value: unknown
 ): Promise<void> {
   const config = getWorkspaceConfig();
   await config.update(key, value, vscode.ConfigurationTarget.Workspace);
@@ -373,7 +403,7 @@ export function getConfiguredDatabases(): DatabaseConfig[] {
  * Add or update a database in settings
  */
 export async function addDatabaseToSettings(
-  dbConfig: DatabaseConfig,
+  dbConfig: DatabaseConfig
 ): Promise<void> {
   const config = getWorkspaceConfig();
   const databases = config.get<DatabaseConfig[]>("databases", []);
@@ -394,7 +424,7 @@ export async function addDatabaseToSettings(
   await config.update(
     "databases",
     databases,
-    vscode.ConfigurationTarget.Workspace,
+    vscode.ConfigurationTarget.Workspace
   );
 }
 
@@ -403,7 +433,7 @@ export async function addDatabaseToSettings(
  */
 export async function updateDatabaseAttachedState(
   alias: string,
-  attached: boolean,
+  attached: boolean
 ): Promise<void> {
   const config = getWorkspaceConfig();
   const databases = config.get<DatabaseConfig[]>("databases", []);
@@ -414,7 +444,7 @@ export async function updateDatabaseAttachedState(
     await config.update(
       "databases",
       databases,
-      vscode.ConfigurationTarget.Workspace,
+      vscode.ConfigurationTarget.Workspace
     );
   }
 }
@@ -424,7 +454,7 @@ export async function updateDatabaseAttachedState(
  */
 export async function updateDatabaseReadOnlyState(
   alias: string,
-  readOnly: boolean,
+  readOnly: boolean
 ): Promise<void> {
   const config = getWorkspaceConfig();
   const databases = config.get<DatabaseConfig[]>("databases", []);
@@ -435,7 +465,7 @@ export async function updateDatabaseReadOnlyState(
     await config.update(
       "databases",
       databases,
-      vscode.ConfigurationTarget.Workspace,
+      vscode.ConfigurationTarget.Workspace
     );
   }
 }
@@ -450,7 +480,7 @@ export async function removeDatabaseFromSettings(alias: string): Promise<void> {
   await config.update(
     "databases",
     filtered,
-    vscode.ConfigurationTarget.Workspace,
+    vscode.ConfigurationTarget.Workspace
   );
 }
 
@@ -471,7 +501,7 @@ export interface CombinedDatabaseInfo {
  * Get combined database state from both DuckDB and settings
  */
 export async function getCombinedDatabases(
-  queryFn: QueryFn,
+  queryFn: QueryFn
 ): Promise<CombinedDatabaseInfo[]> {
   // Get currently attached databases from DuckDB
   const attachedDbs = await getAttachedDatabases(queryFn);
@@ -530,13 +560,13 @@ export async function addExtensionToSettings(extension: string): Promise<void> {
     await config.update(
       "extensions",
       extensions,
-      vscode.ConfigurationTarget.Workspace,
+      vscode.ConfigurationTarget.Workspace
     );
   }
 }
 
 export async function removeExtensionFromSettings(
-  extension: string,
+  extension: string
 ): Promise<void> {
   const config = getWorkspaceConfig();
   const extensions = config.get<string[]>("extensions", []);
@@ -544,6 +574,6 @@ export async function removeExtensionFromSettings(
   await config.update(
     "extensions",
     filtered,
-    vscode.ConfigurationTarget.Workspace,
+    vscode.ConfigurationTarget.Workspace
   );
 }

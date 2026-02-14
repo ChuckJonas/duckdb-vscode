@@ -6,6 +6,7 @@ import {
   getCombinedDatabases,
   CombinedDatabaseInfo,
 } from "../services/databaseManager";
+import { buildSummarizeSql } from "../services/duckdb";
 
 /**
  * Node types in the database explorer tree
@@ -18,7 +19,8 @@ export type ExplorerNodeType =
   | "views-folder"
   | "table"
   | "view"
-  | "column";
+  | "column"
+  | "column-stat";
 
 /**
  * Represents a node in the database explorer tree
@@ -37,6 +39,7 @@ export interface ExplorerNode {
   isAttached?: boolean; // Is this database currently attached?
   isConfigured?: boolean; // Is this database in workspace settings?
   dbPath?: string; // Path to database file
+  statValue?: string; // Display value for column-stat nodes
 }
 
 /**
@@ -50,10 +53,17 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
 
   private currentDatabase: string = "memory";
 
+  // Cache summarize results per table to avoid re-running for each column
+  // Key: "database.schema.tableName"
+  private summarizeCache = new Map<
+    string,
+    Record<string, Record<string, unknown>>
+  >();
+
   constructor(
     private queryFn: (
-      sql: string,
-    ) => Promise<{ rows: Record<string, unknown>[] }>,
+      sql: string
+    ) => Promise<{ rows: Record<string, unknown>[] }>
   ) {
     this.refreshCurrentDatabase();
   }
@@ -74,6 +84,7 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
    */
   refresh(): void {
     this.refreshCurrentDatabase();
+    this.summarizeCache.clear();
     this._onDidChangeTreeData.fire();
   }
 
@@ -83,7 +94,7 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
   getTreeItem(element: ExplorerNode): vscode.TreeItem {
     const item = new vscode.TreeItem(
       this.getLabel(element),
-      this.getCollapsibleState(element),
+      this.getCollapsibleState(element)
     );
 
     // Set context value for menu visibility
@@ -118,8 +129,29 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
     }
 
     switch (element.type) {
-      case "database":
-        return this.getSchemaNodes(element.name);
+      case "database": {
+        const schemas = await this.getSchemaNodes(element.name);
+        // If there's only one schema, skip the schema level and show
+        // Tables/Views folders directly under the database
+        if (schemas.length === 1) {
+          const schema = schemas[0];
+          return [
+            {
+              type: "tables-folder" as const,
+              name: "Tables",
+              database: schema.database,
+              schema: schema.name,
+            },
+            {
+              type: "views-folder" as const,
+              name: "Views",
+              database: schema.database,
+              schema: schema.name,
+            },
+          ];
+        }
+        return schemas;
+      }
 
       case "database-detached":
         // Detached databases have no children (can't query them)
@@ -152,7 +184,15 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
         return this.getColumnNodes(
           element.database!,
           element.schema!,
-          element.name,
+          element.name
+        );
+
+      case "column":
+        return this.getColumnStatNodes(
+          element.database!,
+          element.schema!,
+          element.tableName!,
+          element.name
         );
 
       default:
@@ -220,7 +260,7 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
   private async getTableNodes(
     database: string,
     schema: string,
-    type: "table" | "view",
+    type: "table" | "view"
   ): Promise<ExplorerNode[]> {
     try {
       const tables = await getTables(this.queryFn, database, schema);
@@ -245,7 +285,7 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
   private async getColumnNodes(
     database: string,
     schema: string,
-    tableName: string,
+    tableName: string
   ): Promise<ExplorerNode[]> {
     try {
       const result = await this.queryFn(`
@@ -268,6 +308,83 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
       }));
     } catch (error) {
       console.error("🦆 Failed to get columns:", error);
+      return [];
+    }
+  }
+
+  /**
+   * Get summarize data for a table (cached per table)
+   */
+  private async getSummarizeData(
+    database: string,
+    schema: string,
+    tableName: string
+  ): Promise<Record<string, Record<string, unknown>>> {
+    const cacheKey = `${database}.${schema}.${tableName}`;
+    if (this.summarizeCache.has(cacheKey)) {
+      return this.summarizeCache.get(cacheKey)!;
+    }
+
+    const sql = buildSummarizeSql(database, schema, tableName);
+    const result = await this.queryFn(sql);
+
+    // Index by column_name for quick lookup
+    const byColumn: Record<string, Record<string, unknown>> = {};
+    for (const row of result.rows) {
+      const colName = row.column_name as string;
+      if (colName) {
+        byColumn[colName] = row;
+      }
+    }
+
+    this.summarizeCache.set(cacheKey, byColumn);
+    return byColumn;
+  }
+
+  /**
+   * Get stat nodes for a column (from SUMMARIZE)
+   */
+  private async getColumnStatNodes(
+    database: string,
+    schema: string,
+    tableName: string,
+    columnName: string
+  ): Promise<ExplorerNode[]> {
+    try {
+      const summarizeData = await this.getSummarizeData(
+        database,
+        schema,
+        tableName
+      );
+      const stats = summarizeData[columnName];
+      if (!stats) return [];
+
+      const statNodes: ExplorerNode[] = [];
+      const addStat = (label: string, value: unknown) => {
+        if (value !== null && value !== undefined && value !== "") {
+          statNodes.push({
+            type: "column-stat" as const,
+            name: label,
+            statValue: String(value),
+            database,
+            schema,
+            tableName,
+          });
+        }
+      };
+
+      addStat("Type", stats.column_type);
+      addStat("Min", stats.min);
+      addStat("Max", stats.max);
+      addStat("Unique", stats.approx_unique);
+      addStat(
+        "Nulls",
+        stats.null_percentage ? `${stats.null_percentage}%` : "0%"
+      );
+
+      return statNodes;
+    } catch (error) {
+      console.error("🦆 Failed to get column stats:", error);
       return [];
     }
   }
@@ -302,6 +419,9 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
     if (element.type === "column") {
       return element.dataType;
     }
+    if (element.type === "column-stat") {
+      return element.statValue;
+    }
     if (
       (element.type === "table" || element.type === "view") &&
       element.rowCount !== undefined
@@ -328,7 +448,7 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
    * Get collapsible state for a node
    */
   private getCollapsibleState(
-    element: ExplorerNode,
+    element: ExplorerNode
   ): vscode.TreeItemCollapsibleState {
     switch (element.type) {
       case "database":
@@ -339,8 +459,10 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
       case "view":
         return vscode.TreeItemCollapsibleState.Collapsed;
       case "database-detached":
-      case "column":
+      case "column-stat":
         return vscode.TreeItemCollapsibleState.None;
+      case "column":
+        return vscode.TreeItemCollapsibleState.Collapsed;
     }
   }
 
@@ -354,14 +476,14 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
         return element.isCurrent
           ? new vscode.ThemeIcon(
               "database",
-              new vscode.ThemeColor("charts.green"),
+              new vscode.ThemeColor("charts.green")
             )
           : new vscode.ThemeIcon("database");
       case "database-detached":
         // Gray/dimmed icon for detached
         return new vscode.ThemeIcon(
           "database",
-          new vscode.ThemeColor("disabledForeground"),
+          new vscode.ThemeColor("disabledForeground")
         );
       case "schema":
         return new vscode.ThemeIcon("symbol-namespace");
@@ -374,6 +496,8 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
         return new vscode.ThemeIcon("eye");
       case "column":
         return new vscode.ThemeIcon("symbol-field");
+      case "column-stat":
+        return new vscode.ThemeIcon("info");
     }
   }
 
@@ -406,6 +530,8 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
       case "column":
         const nullable = element.isNullable ? "NULL" : "NOT NULL";
         return `${element.dataType} ${nullable}`;
+      case "column-stat":
+        return `${element.name}: ${element.statValue}`;
       default:
         return element.name;
     }
@@ -419,7 +545,7 @@ export async function getTableDefinition(
   queryFn: (sql: string) => Promise<{ rows: Record<string, unknown>[] }>,
   database: string,
   schema: string,
-  tableName: string,
+  tableName: string
 ): Promise<string> {
   const result = await queryFn(`
     SELECT
@@ -445,7 +571,9 @@ export async function getTableDefinition(
     return col;
   });
 
-  return `CREATE TABLE "${schema}"."${tableName}" (\n${columns.join(",\n")}\n);`;
+  return `CREATE TABLE "${schema}"."${tableName}" (\n${columns.join(
+    ",\n"
+  )}\n);`;
 }
 
 /**
@@ -455,7 +583,7 @@ export async function getViewDefinition(
   queryFn: (sql: string) => Promise<{ rows: Record<string, unknown>[] }>,
   database: string,
   schema: string,
-  viewName: string,
+  viewName: string
 ): Promise<string> {
   const result = await queryFn(`
     SELECT sql

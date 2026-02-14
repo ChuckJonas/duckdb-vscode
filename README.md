@@ -25,13 +25,15 @@ Performance Note: When you execute a query, the extension will create a temporar
 
 - **Execute queries** — `Cmd+Enter` (Mac) / `Ctrl+Enter` (Windows/Linux)
 - **Run individual statements** — CodeLens "Run" buttons above each SQL statement
-- **SQL autocomplete** — Table names, columns, functions, and keywords.  Somewhat experimental, can be disabled in settings.
-- **Inline error diagnostics** — Syntax errors shown directly in the editor
+- **SQL autocomplete** — Table names, columns, functions, and keywords. Can be disabled in settings.
+- **SQL formatting** — Format Document and Format Selection support with configurable keyword casing, indentation style, and logical operator placement
+- **Inline diagnostics** — Success confirmations with execution time and error messages shown inline after each statement
 
 ### File Integration
 
-- **Right-click to query** — Select files in Explorer → "DuckDB: Query File". CSV, Parquet, JSON, JSONL, TSV supported.
+- **Right-click to query** — Select files in Explorer → "DuckDB: Query File". CSV, Parquet, JSON, JSONL, TSV, and XLSX supported.
 - **Summarize files** — Quick data profiling with SUMMARIZE
+- **`.duckdb` file association** — Files with the `.duckdb` extension are treated as SQL with full editor support
 
 ### Results Table
 
@@ -149,11 +151,42 @@ Rows per page in results table (default: `1000`, range: 100–10,000).
 
 Maximum rows for copy/export operations (default: `50000`, range: 1,000–1,000,000).
 
-### Experimental
+### Autocomplete
 
 #### `duckdb.autocomplete.enabled`
 
-Enable SQL autocomplete suggestions (default: `false`). This feature is experimental and may have bugs.
+Enable SQL autocomplete suggestions (default: `true`).
+
+### SQL Formatting
+
+#### `duckdb.format.keywordCase`
+
+Keyword casing style (default: `"upper"`).
+
+| Value      | Description                                  |
+| ---------- | -------------------------------------------- |
+| `upper`    | Uppercase keywords (SELECT, FROM, WHERE)     |
+| `lower`    | Lowercase keywords (select, from, where)     |
+| `preserve` | Preserve original keyword casing             |
+
+#### `duckdb.format.indentStyle`
+
+Indentation style (default: `"standard"`).
+
+| Value          | Description                          |
+| -------------- | ------------------------------------ |
+| `standard`     | Standard indentation                 |
+| `tabularLeft`  | Tabular style, keywords left-aligned |
+| `tabularRight` | Tabular style, keywords right-aligned|
+
+#### `duckdb.format.logicalOperatorNewline`
+
+Where to place logical operators relative to newlines (default: `"before"`).
+
+| Value   | Description                        |
+| ------- | ---------------------------------- |
+| `before`| Place AND/OR before the newline    |
+| `after` | Place AND/OR after the newline     |
 
 ### Query History
 
@@ -169,14 +202,16 @@ Maximum history entries to keep (default: `1000`).
 
 ## Commands
 
-| Command                    | Keybinding  | Description                     |
-| -------------------------- | ----------- | ------------------------------- |
-| DuckDB: Execute Query      | `Cmd+Enter` | Run SQL in active editor        |
-| DuckDB: Select Database    | —           | Switch active database          |
-| DuckDB: Manage Extensions  | —           | Install/remove extensions       |
-| DuckDB: Query File         | —           | Query a data file (right-click) |
-| DuckDB: Summarize File     | —           | Profile a data file             |
-| DuckDB: Copy Query         | —           | Copy SELECT statement for file  |
+| Command                    | Keybinding  | Description                            |
+| -------------------------- | ----------- | -------------------------------------- |
+| DuckDB: Execute Query      | `Cmd+Enter` | Run all SQL in active editor           |
+| DuckDB: Run Statement      | —           | Run a single statement (via CodeLens)  |
+| DuckDB: Select Database    | —           | Switch active database                 |
+| DuckDB: Manage Extensions  | —           | Install/remove extensions              |
+| DuckDB: Query File         | —           | Query a data file (right-click)        |
+| DuckDB: Summarize File     | —           | Profile a data file                    |
+| DuckDB: Copy Query         | —           | Copy SELECT statement for file         |
+| Go to Source File          | —           | Navigate from results to source SQL    |
 
 ---
 
@@ -189,7 +224,7 @@ Releases are automated via GitHub Actions. Pushing a version tag triggers the CI
 1. **Bump the version** in `package.json`:
 
    ```json
-   "version": "0.0.10"
+   "version": "0.0.15"
    ```
 
 2. **Commit the version bump**:
@@ -202,7 +237,7 @@ Releases are automated via GitHub Actions. Pushing a version tag triggers the CI
 3. **Tag and push**:
 
    ```bash
-   git tag v0.0.10
+   git tag v0.0.15
    git push origin main --tags
    ```
 
@@ -225,7 +260,7 @@ The publish steps require these repository secrets:
 
 ## Requirements
 
-- VS Code 1.74.0 or later
+- VS Code 1.85.0 or later
 - macOS, Linux, or Windows
 
 ---

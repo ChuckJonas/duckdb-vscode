@@ -8,6 +8,7 @@ import {
   buildQueryFileSql,
   DuckDBQueryError,
   DuckDBError,
+  getStatementType,
 } from "./services/duckdb";
 import {
   showResultsPanel,
@@ -56,6 +57,11 @@ import {
   updateDatabaseAttachedState,
   updateDatabaseReadOnlyState,
   getConfiguredDatabases,
+  addIgnoredSchema,
+  getIgnoredSchemas,
+  getSchemas,
+  getTables,
+  getAttachedDatabases,
 } from "./services/databaseManager";
 import { getAutocompleteSuggestions } from "./services/autocompleteService";
 import {
@@ -287,6 +293,10 @@ export async function activate(context: vscode.ExtensionContext) {
     vscode.workspace
       .getConfiguration("duckdb")
       .get<number>("maxCopyRows", 50000);
+  const getDefaultRowLimit = () =>
+    vscode.workspace
+      .getConfiguration("duckdb")
+      .get<number>("explorer.defaultRowLimit", 1000);
 
   // Register Execute Query command
   const executeCmd = vscode.commands.registerCommand(
@@ -348,6 +358,14 @@ export async function activate(context: vscode.ExtensionContext) {
 
         // Refresh database list in case ATTACH was run
         updateStatusBar();
+
+        // Auto-refresh explorer if any statement was DDL/DML (CREATE, DROP, ALTER, INSERT, etc.)
+        const hasSchemaChange = result.statements.some(
+          (s) => getStatementType(s.meta.sql) === "command"
+        );
+        if (hasSchemaChange) {
+          databaseExplorer.refresh();
+        }
       } catch (error) {
         // Record failed query in history
         const dbName = await getCurrentDatabase(async (s) => ({
@@ -436,6 +454,14 @@ export async function activate(context: vscode.ExtensionContext) {
         });
 
         updateStatusBar();
+
+        // Auto-refresh explorer if any statement was DDL/DML
+        const hasSchemaChange = result.statements.some(
+          (s) => getStatementType(s.meta.sql) === "command"
+        );
+        if (hasSchemaChange) {
+          databaseExplorer.refresh();
+        }
       } catch (error) {
         const dbName = await getCurrentDatabase(async (s) => ({
           rows: await db.query(s),
@@ -1042,7 +1068,12 @@ export async function activate(context: vscode.ExtensionContext) {
       if (node.type !== "table" && node.type !== "view") return;
 
       const schema = node.schema || "main";
-      const sql = buildSelectTopSql(node.database!, schema, node.name, 100);
+      const sql = buildSelectTopSql(
+        node.database!,
+        schema,
+        node.name,
+        getDefaultRowLimit()
+      );
 
       try {
         const pageSize = getPageSize();
@@ -1176,7 +1207,9 @@ export async function activate(context: vscode.ExtensionContext) {
       if (node.type !== "column") return;
 
       const schema = node.schema || "main";
-      const sql = `SELECT "${node.name}" FROM "${node.database}"."${schema}"."${node.tableName}" LIMIT 100`;
+      const qualifiedTable = `"${node.database}"."${schema}"."${node.tableName}"`;
+      const limit = getDefaultRowLimit();
+      const sql = `SELECT "${node.name}", COUNT(*) AS count FROM ${qualifiedTable} GROUP BY "${node.name}" ORDER BY count DESC LIMIT ${limit}`;
 
       try {
         const pageSize = getPageSize();
@@ -1224,6 +1257,246 @@ export async function activate(context: vscode.ExtensionContext) {
         } catch (error) {
           vscode.window.showErrorMessage(`Failed to drop: ${error}`);
         }
+      }
+    }
+  );
+
+  const explorerHideSchemaCmd = vscode.commands.registerCommand(
+    "duckdb.explorer.hideSchema",
+    async (node: ExplorerNode) => {
+      if (node.type !== "schema") return;
+
+      const confirm = await vscode.window.showWarningMessage(
+        `Hide schema "${node.name}" from the explorer? You can restore it in Settings > DuckDB > Explorer: Ignored Schemas.`,
+        "Hide"
+      );
+      if (confirm !== "Hide") return;
+
+      await addIgnoredSchema(node.name);
+      databaseExplorer.refresh();
+      vscode.window.showInformationMessage(
+        `Schema "${node.name}" is now hidden from the explorer.`
+      );
+    }
+  );
+
+  const explorerShowHiddenSchemasCmd = vscode.commands.registerCommand(
+    "duckdb.explorer.showHiddenSchemas",
+    async () => {
+      const ignored = getIgnoredSchemas();
+      if (ignored.length === 0) {
+        vscode.window.showInformationMessage(
+          "No schemas are currently hidden."
+        );
+        return;
+      }
+
+      const selected = await vscode.window.showQuickPick(ignored, {
+        placeHolder: "Select a schema to show again",
+        canPickMany: true,
+        title: "Hidden Schemas",
+      });
+
+      if (selected && selected.length > 0) {
+        const config = getWorkspaceConfig();
+        const current = config.get<string[]>("explorer.ignoredSchemas", []);
+        const updated = current.filter((s) => !selected.includes(s));
+        await config.update(
+          "explorer.ignoredSchemas",
+          updated,
+          vscode.ConfigurationTarget.Workspace
+        );
+        databaseExplorer.refresh();
+        vscode.window.showInformationMessage(
+          `Restored ${selected.length} schema(s) to the explorer.`
+        );
+      }
+    }
+  );
+
+  const explorerFindTableCmd = vscode.commands.registerCommand(
+    "duckdb.explorer.findTable",
+    async () => {
+      const queryFn = async (sql: string) => ({
+        rows: await db.query(sql),
+      });
+
+      // Gather all tables/views from all attached databases and schemas
+      const items: Array<{
+        label: string;
+        description: string;
+        detail: string;
+        database: string;
+        schema: string;
+        name: string;
+        objectType: "table" | "view";
+      }> = [];
+
+      try {
+        const databases = await getAttachedDatabases(queryFn);
+        for (const database of databases) {
+          if (database.isInternal) continue;
+          const schemas = await getSchemas(queryFn, database.name);
+          for (const schema of schemas) {
+            const tables = await getTables(queryFn, database.name, schema.name);
+            for (const table of tables) {
+              const icon = table.type === "view" ? "$(eye)" : "$(table)";
+              items.push({
+                label: `${icon} ${table.name}`,
+                description: `${database.name}.${schema.name}`,
+                detail:
+                  table.rowCount !== undefined
+                    ? `${table.type} — ${table.rowCount.toLocaleString()} rows`
+                    : table.type,
+                database: database.name,
+                schema: schema.name,
+                name: table.name,
+                objectType: table.type,
+              });
+            }
+          }
+        }
+      } catch (error) {
+        vscode.window.showErrorMessage(`Failed to search tables: ${error}`);
+        return;
+      }
+
+      if (items.length === 0) {
+        vscode.window.showInformationMessage("No tables or views found.");
+        return;
+      }
+
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: "Type to search for a table or view...",
+        matchOnDescription: true,
+        matchOnDetail: true,
+        title: "Find Table or View",
+      });
+
+      if (selected) {
+        // Run Select Top Rows on the selected table
+        const limit = getDefaultRowLimit();
+        const sql = buildSelectTopSql(
+          selected.database,
+          selected.schema,
+          selected.name,
+          limit
+        );
+        try {
+          const pageSize = getPageSize();
+          const result = await db.executeQuery(sql, pageSize);
+          showResultsPanel(
+            result,
+            context,
+            `explorer-${selected.name}`,
+            pageSize,
+            getMaxCopyRows()
+          );
+        } catch (error) {
+          vscode.window.showErrorMessage(`Query failed: ${error}`);
+        }
+      }
+    }
+  );
+
+  const explorerCopyAsInsertCmd = vscode.commands.registerCommand(
+    "duckdb.explorer.copyAsInsert",
+    async (node: ExplorerNode) => {
+      if (node.type !== "table" && node.type !== "view") return;
+
+      const schema = node.schema || "main";
+      const queryFn = async (sql: string) => ({
+        rows: await db.query(sql),
+      });
+
+      try {
+        // Get column info for the INSERT template
+        const result = await queryFn(`
+          SELECT column_name, data_type
+          FROM information_schema.columns
+          WHERE table_catalog = '${node.database}'
+            AND table_schema = '${schema}'
+            AND table_name = '${node.name}'
+          ORDER BY ordinal_position
+        `);
+
+        const columns = result.rows.map((r) => r.column_name as string);
+        const placeholders = result.rows.map((r) => {
+          const dt = (r.data_type as string).toUpperCase();
+          if (
+            dt.includes("INT") ||
+            dt.includes("FLOAT") ||
+            dt.includes("DOUBLE") ||
+            dt.includes("DECIMAL") ||
+            dt.includes("NUMERIC")
+          ) {
+            return "0";
+          }
+          if (dt.includes("BOOL")) {
+            return "false";
+          }
+          if (
+            dt.includes("DATE") ||
+            dt.includes("TIME") ||
+            dt.includes("TIMESTAMP")
+          ) {
+            return `'${new Date().toISOString().slice(0, 10)}'`;
+          }
+          return "''";
+        });
+
+        const qualifiedName = `"${node.database}"."${schema}"."${node.name}"`;
+        const sql = `INSERT INTO ${qualifiedName} (\n    ${columns
+          .map((c) => `"${c}"`)
+          .join(",\n    ")}\n) VALUES (\n    ${placeholders.join(
+          ",\n    "
+        )}\n);`;
+
+        await vscode.env.clipboard.writeText(sql);
+        vscode.window.showInformationMessage(
+          "Copied INSERT template to clipboard"
+        );
+      } catch (error) {
+        vscode.window.showErrorMessage(`Failed to generate INSERT: ${error}`);
+      }
+    }
+  );
+
+  const explorerCopyAsCreateCmd = vscode.commands.registerCommand(
+    "duckdb.explorer.copyAsCreate",
+    async (node: ExplorerNode) => {
+      if (node.type !== "table" && node.type !== "view") return;
+
+      const schema = node.schema || "main";
+      const queryFn = async (sql: string) => ({
+        rows: await db.query(sql),
+      });
+
+      try {
+        let ddl: string;
+        if (node.type === "view") {
+          ddl = await getViewDefinition(
+            queryFn,
+            node.database!,
+            schema,
+            node.name
+          );
+        } else {
+          ddl = await getTableDefinition(
+            queryFn,
+            node.database!,
+            schema,
+            node.name
+          );
+        }
+        await vscode.env.clipboard.writeText(ddl);
+        vscode.window.showInformationMessage(
+          `Copied CREATE ${
+            node.type === "view" ? "VIEW" : "TABLE"
+          } to clipboard`
+        );
+      } catch (error) {
+        vscode.window.showErrorMessage(`Failed to generate DDL: ${error}`);
       }
     }
   );
@@ -1491,6 +1764,121 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  const historySearchCmd = vscode.commands.registerCommand(
+    "duckdb.history.search",
+    async () => {
+      const entries = getHistoryService().getEntries();
+
+      if (entries.length === 0) {
+        vscode.window.showInformationMessage("No query history yet.");
+        return;
+      }
+
+      const items = entries.map((entry) => {
+        const time = entry.executedAt.toLocaleString("en-US", {
+          month: "short",
+          day: "numeric",
+          hour: "numeric",
+          minute: "2-digit",
+          hour12: true,
+        });
+
+        const status = entry.error ? "$(error)" : "$(check)";
+        const sqlOneLine = entry.sql.replace(/\s+/g, " ").trim();
+        const sqlTruncated =
+          sqlOneLine.length > 80
+            ? sqlOneLine.substring(0, 80) + "..."
+            : sqlOneLine;
+
+        let detail = `${time} · ${entry.databaseName}`;
+        if (entry.error) {
+          detail += ` · Error`;
+        } else if (entry.rowCount !== null) {
+          const duration =
+            entry.durationMs < 1000
+              ? `${Math.round(entry.durationMs)}ms`
+              : `${(entry.durationMs / 1000).toFixed(1)}s`;
+          detail += ` · ${entry.rowCount.toLocaleString()} rows · ${duration}`;
+        }
+
+        return {
+          label: `${status} ${sqlTruncated}`,
+          description: entry.databaseName,
+          detail,
+          entry,
+        };
+      });
+
+      const selected = await vscode.window.showQuickPick(items, {
+        placeHolder: "Type to search query history...",
+        matchOnDescription: true,
+        matchOnDetail: true,
+        title: "Search Query History",
+      });
+
+      if (!selected) return;
+
+      // Offer actions on the selected entry
+      const action = await vscode.window.showQuickPick(
+        [
+          { label: "$(play) Run Again", action: "run" },
+          { label: "$(go-to-file) Open in Editor", action: "open" },
+          { label: "$(copy) Copy SQL", action: "copy" },
+        ],
+        { placeHolder: "What would you like to do with this query?" }
+      );
+
+      if (!action) return;
+
+      switch (action.action) {
+        case "run": {
+          try {
+            const pageSize = getPageSize();
+            const result = await db.executeQuery(selected.entry.sql, pageSize);
+            showResultsPanel(
+              result,
+              context,
+              `history-${selected.entry.id}`,
+              pageSize,
+              getMaxCopyRows()
+            );
+
+            const dbName = await getCurrentDatabase(async (s) => ({
+              rows: await db.query(s),
+            }));
+            const lastStmt = result.statements[result.statements.length - 1];
+            await getHistoryService().addEntry({
+              sql: selected.entry.sql,
+              executedAt: new Date(),
+              durationMs: result.totalExecutionTime,
+              rowCount: lastStmt?.meta.totalRows || 0,
+              columnCount: lastStmt?.meta.columns.length || 0,
+              error: null,
+              databaseName: dbName,
+              sourceFile: null,
+            });
+          } catch (error) {
+            vscode.window.showErrorMessage(`Query failed: ${error}`);
+          }
+          break;
+        }
+        case "open": {
+          const doc = await vscode.workspace.openTextDocument({
+            content: selected.entry.sql,
+            language: "sql",
+          });
+          await vscode.window.showTextDocument(doc);
+          break;
+        }
+        case "copy": {
+          await vscode.env.clipboard.writeText(selected.entry.sql);
+          vscode.window.showInformationMessage("SQL copied to clipboard");
+          break;
+        }
+      }
+    }
+  );
+
   const historyRunAgainCmd = vscode.commands.registerCommand(
     "duckdb.history.runAgain",
     async (node: HistoryNode) => {
@@ -1690,6 +2078,11 @@ export async function activate(context: vscode.ExtensionContext) {
     explorerCopyNameCmd,
     explorerSelectColumnCmd,
     explorerDropCmd,
+    explorerHideSchemaCmd,
+    explorerShowHiddenSchemasCmd,
+    explorerFindTableCmd,
+    explorerCopyAsInsertCmd,
+    explorerCopyAsCreateCmd,
     explorerUseDatabaseCmd,
     explorerAttachDatabaseCmd,
     explorerDetachDatabaseCmd,
@@ -1700,6 +2093,7 @@ export async function activate(context: vscode.ExtensionContext) {
     explorerNewViewCmd,
     historyTreeView,
     historyRefreshCmd,
+    historySearchCmd,
     historyRunAgainCmd,
     historyOpenInEditorCmd,
     historyCopySqlCmd,

@@ -2,7 +2,7 @@
   "name": "duckdb",
   "displayName": "DuckDB",
   "description": "A DuckDB client for VS Code",
-  "version": "0.0.14",
+  "version": "0.0.15",
   "publisher": "chuckjonas",
   "icon": "resources/icon.png",
   "repository": {
@@ -87,7 +87,7 @@
       },
       {
         "command": "duckdb.explorer.selectTop100",
-        "title": "Select Top 100"
+        "title": "Select Top Rows"
       },
       {
         "command": "duckdb.explorer.describe",
@@ -107,7 +107,7 @@
       },
       {
         "command": "duckdb.explorer.selectColumn",
-        "title": "Select Column"
+        "title": "Select Distinct Values"
       },
       {
         "command": "duckdb.explorer.drop",
@@ -145,6 +145,32 @@
       {
         "command": "duckdb.explorer.newView",
         "title": "New View..."
+      },
+      {
+        "command": "duckdb.explorer.hideSchema",
+        "title": "Hide Schema"
+      },
+      {
+        "command": "duckdb.explorer.showHiddenSchemas",
+        "title": "Show Hidden Schemas..."
+      },
+      {
+        "command": "duckdb.explorer.findTable",
+        "title": "DuckDB: Find Table...",
+        "icon": "$(search)"
+      },
+      {
+        "command": "duckdb.explorer.copyAsInsert",
+        "title": "Copy as INSERT"
+      },
+      {
+        "command": "duckdb.explorer.copyAsCreate",
+        "title": "Copy as CREATE TABLE"
+      },
+      {
+        "command": "duckdb.history.search",
+        "title": "DuckDB: Search History...",
+        "icon": "$(search)"
       },
       {
         "command": "duckdb.history.runAgain",
@@ -210,8 +236,18 @@
           "group": "navigation"
         },
         {
+          "command": "duckdb.explorer.findTable",
+          "when": "view == duckdb.databaseExplorer",
+          "group": "navigation"
+        },
+        {
           "command": "duckdb.explorer.refresh",
           "when": "view == duckdb.databaseExplorer",
+          "group": "navigation"
+        },
+        {
+          "command": "duckdb.history.search",
+          "when": "view == duckdb.queryHistory",
           "group": "navigation"
         },
         {
@@ -297,14 +333,29 @@
           "group": "2_copy@1"
         },
         {
+          "command": "duckdb.explorer.copyAsInsert",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^(table|view)$/",
+          "group": "2_copy@2"
+        },
+        {
+          "command": "duckdb.explorer.copyAsCreate",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^(table|view)$/",
+          "group": "2_copy@3"
+        },
+        {
           "command": "duckdb.explorer.selectColumn",
           "when": "view == duckdb.databaseExplorer && viewItem == column",
           "group": "1_query@1"
         },
         {
+          "command": "duckdb.explorer.hideSchema",
+          "when": "view == duckdb.databaseExplorer && viewItem == schema",
+          "group": "3_danger@1"
+        },
+        {
           "command": "duckdb.explorer.drop",
           "when": "view == duckdb.databaseExplorer && viewItem =~ /^(table|view)$/",
-          "group": "3_danger@1"
+          "group": "3_danger@2"
         },
         {
           "command": "duckdb.extensions.unload",
@@ -416,6 +467,18 @@
         },
         {
           "command": "duckdb.explorer.newView",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.hideSchema",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.copyAsInsert",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.copyAsCreate",
           "when": "false"
         },
         {
@@ -599,6 +662,21 @@
           "type": "boolean",
           "default": true,
           "description": "Enable SQL autocomplete suggestions"
+        },
+        "duckdb.explorer.defaultRowLimit": {
+          "type": "number",
+          "default": 1000,
+          "minimum": 1,
+          "maximum": 100000,
+          "description": "Default row limit for Select Top Rows and Select Distinct Values in the database explorer"
+        },
+        "duckdb.explorer.ignoredSchemas": {
+          "type": "array",
+          "default": [],
+          "description": "Schema names to hide from the database explorer tree",
+          "items": {
+            "type": "string"
+          }
         },
         "duckdb.format.keywordCase": {
           "type": "string",
