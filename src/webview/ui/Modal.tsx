@@ -1,4 +1,12 @@
 import React, { useState, useEffect } from 'react';
+import { Copy, Check, X } from 'lucide-react';
+import { IconButton } from './IconButton';
+
+export interface ModalAction {
+  icon: React.ReactNode;
+  label: string;
+  onClick: () => void;
+}
 
 export interface ModalProps {
   title: React.ReactNode;
@@ -8,10 +16,11 @@ export interface ModalProps {
   hint?: string;
   size?: string;
   className?: string;
+  actions?: ModalAction[];
   children: React.ReactNode;
 }
 
-export function Modal({ title, onClose, onCopy, copyLabel = 'Copy', hint, size, className, children }: ModalProps) {
+export function Modal({ title, onClose, onCopy, copyLabel = 'Copy', hint, size, className, actions, children }: ModalProps) {
   const [copied, setCopied] = useState(false);
 
   const handleCopy = () => {
@@ -32,8 +41,25 @@ export function Modal({ title, onClose, onCopy, copyLabel = 'Copy', hint, size, 
         <div className="modal-header">
           <span className="modal-title">{title}</span>
           <div className="modal-actions">
-            <button className="modal-btn" onClick={handleCopy}>{copied ? '✓ Copied' : copyLabel}</button>
-            <button className="modal-btn modal-close" onClick={onClose} title="Close (Esc)">✕</button>
+            <IconButton
+              icon={copied ? <Check size={14} /> : <Copy size={14} />}
+              tooltip={copyLabel}
+              onClick={handleCopy}
+            />
+            {actions?.map((action, i) => (
+              <IconButton
+                key={i}
+                icon={action.icon}
+                tooltip={action.label}
+                onClick={action.onClick}
+              />
+            ))}
+            <IconButton
+              icon={<X size={14} />}
+              tooltip="Close (Esc)"
+              onClick={onClose}
+              className="modal-close"
+            />
           </div>
         </div>
         {children}

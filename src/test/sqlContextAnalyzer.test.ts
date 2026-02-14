@@ -45,7 +45,7 @@ describe("SQL Context Analyzer", () => {
 
     it("detects SELECT clause (middle of columns)", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT id, |, created_at FROM users",
+        "SELECT id, |, created_at FROM users"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "select");
@@ -72,7 +72,7 @@ describe("SQL Context Analyzer", () => {
 
     it("detects LEFT JOIN clause", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT * FROM users LEFT JOIN |",
+        "SELECT * FROM users LEFT JOIN |"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "join");
@@ -80,7 +80,7 @@ describe("SQL Context Analyzer", () => {
 
     it("detects ON clause", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT * FROM users u JOIN orders o ON |",
+        "SELECT * FROM users u JOIN orders o ON |"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "on");
@@ -88,7 +88,7 @@ describe("SQL Context Analyzer", () => {
 
     it("detects ON clause (partial)", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT * FROM users u JOIN orders o ON u.id = o.user|",
+        "SELECT * FROM users u JOIN orders o ON u.id = o.user|"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "on");
@@ -97,7 +97,7 @@ describe("SQL Context Analyzer", () => {
 
     it("detects WHERE clause", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT * FROM users WHERE |",
+        "SELECT * FROM users WHERE |"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "where");
@@ -105,7 +105,7 @@ describe("SQL Context Analyzer", () => {
 
     it("detects WHERE clause (after AND)", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT * FROM users WHERE id = 1 AND |",
+        "SELECT * FROM users WHERE id = 1 AND |"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "where");
@@ -113,7 +113,7 @@ describe("SQL Context Analyzer", () => {
 
     it("detects GROUP BY clause", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT * FROM users GROUP BY |",
+        "SELECT * FROM users GROUP BY |"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "group_by");
@@ -121,7 +121,7 @@ describe("SQL Context Analyzer", () => {
 
     it("detects HAVING clause", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT * FROM users GROUP BY id HAVING |",
+        "SELECT * FROM users GROUP BY id HAVING |"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "having");
@@ -129,7 +129,7 @@ describe("SQL Context Analyzer", () => {
 
     it("detects ORDER BY clause", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT * FROM users ORDER BY |",
+        "SELECT * FROM users ORDER BY |"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "order_by");
@@ -137,7 +137,7 @@ describe("SQL Context Analyzer", () => {
 
     it("detects ORDER BY clause (after comma)", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT * FROM users ORDER BY id, |",
+        "SELECT * FROM users ORDER BY id, |"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "order_by");
@@ -171,7 +171,7 @@ describe("SQL Context Analyzer", () => {
 
     it("extracts multiple tables from JOIN", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT | FROM users u JOIN orders o ON u.id = o.user_id",
+        "SELECT | FROM users u JOIN orders o ON u.id = o.user_id"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.tables.length, 2);
@@ -204,7 +204,7 @@ describe("SQL Context Analyzer", () => {
 
     it("extracts fully-qualified table (database.schema.table)", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT | FROM mydb.main.users",
+        "SELECT | FROM mydb.main.users"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.tables.length, 1);
@@ -215,7 +215,7 @@ describe("SQL Context Analyzer", () => {
   describe("Table Extraction - File Paths (CSV, Parquet)", () => {
     it("extracts single-quoted file path", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT | FROM 'data/users.csv'",
+        "SELECT | FROM 'data/users.csv'"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.tables.length, 1);
@@ -225,7 +225,7 @@ describe("SQL Context Analyzer", () => {
 
     it("extracts double-quoted file path", () => {
       const { sql, cursor } = parseCursorPosition(
-        'SELECT | FROM "data/users.csv"',
+        'SELECT | FROM "data/users.csv"'
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.tables.length, 1);
@@ -235,7 +235,7 @@ describe("SQL Context Analyzer", () => {
 
     it("extracts file path with alias", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT | FROM 'data/users.csv' u",
+        "SELECT | FROM 'data/users.csv' u"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.tables[0].name, "data/users.csv");
@@ -245,7 +245,7 @@ describe("SQL Context Analyzer", () => {
 
     it("extracts S3 path", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT | FROM 's3://bucket/data/users.parquet'",
+        "SELECT | FROM 's3://bucket/data/users.parquet'"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.tables[0].name, "s3://bucket/data/users.parquet");
@@ -254,7 +254,7 @@ describe("SQL Context Analyzer", () => {
 
     it("extracts read_csv function", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT | FROM read_csv('data/users.csv')",
+        "SELECT | FROM read_csv('data/users.csv')"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.tables.length, 1);
@@ -264,7 +264,7 @@ describe("SQL Context Analyzer", () => {
 
     it("extracts read_csv with alias", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT | FROM read_csv('data/users.csv') AS u",
+        "SELECT | FROM read_csv('data/users.csv') AS u"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.tables[0].name, "read_csv('data/users.csv')");
@@ -273,19 +273,19 @@ describe("SQL Context Analyzer", () => {
 
     it("extracts read_parquet function", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT | FROM read_parquet('s3://bucket/*.parquet')",
+        "SELECT | FROM read_parquet('s3://bucket/*.parquet')"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(
         ctx.tables[0].name,
-        "read_parquet('s3://bucket/*.parquet')",
+        "read_parquet('s3://bucket/*.parquet')"
       );
       assert.strictEqual(ctx.tables[0].type, "function");
     });
 
     it("extracts read_csv with options", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT | FROM read_csv('data.csv', header=true, delim=',')",
+        "SELECT | FROM read_csv('data.csv', header=true, delim=',')"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.tables[0].type, "function");
@@ -426,7 +426,7 @@ describe("SQL Context Analyzer", () => {
 
     it("handles dot in WHERE clause", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT * FROM users u WHERE u.|",
+        "SELECT * FROM users u WHERE u.|"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "where");
@@ -436,7 +436,7 @@ describe("SQL Context Analyzer", () => {
 
     it("handles dot in JOIN ON clause", () => {
       const { sql, cursor } = parseCursorPosition(
-        "SELECT * FROM users u JOIN orders o ON u.id = o.|",
+        "SELECT * FROM users u JOIN orders o ON u.id = o.|"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "on");
@@ -564,7 +564,7 @@ describe("SQL Context Analyzer", () => {
 
     it("handles SET clause in UPDATE", () => {
       const { sql, cursor } = parseCursorPosition(
-        "UPDATE users SET | WHERE id = 1",
+        "UPDATE users SET | WHERE id = 1"
       );
       const ctx = analyzeSQLContext(sql, cursor);
       assert.strictEqual(ctx.clause, "set");
@@ -640,26 +640,45 @@ describe("SQL Context Analyzer", () => {
     it("detects cursor inside single-quoted string", () => {
       const { sql, cursor } = parseCursorPosition("SELECT * FROM '|'");
       const ctx = analyzeSQLContext(sql, cursor);
-      assert.ok(ctx.quoteContext?.inQuote, "Should detect inside quote");
+      assert.ok(ctx.quoteContext?.inQuote, "Should detect inside single quote");
       assert.strictEqual(ctx.quoteContext?.quoteChar, "'");
       assert.strictEqual(ctx.quoteContext?.pathPrefix, "");
     });
 
-    it("detects cursor inside double-quoted string", () => {
+    it("detects double-quoted string as identifier quote context", () => {
+      // Double quotes are SQL identifier quotes - detected with quoteChar='"'
+      // so the completion service can provide identifier (not file) completions
       const { sql, cursor } = parseCursorPosition('SELECT * FROM "|"');
       const ctx = analyzeSQLContext(sql, cursor);
-      assert.ok(ctx.quoteContext?.inQuote, "Should detect inside quote");
-      assert.strictEqual(ctx.quoteContext?.quoteChar, '"');
+      assert.ok(ctx.quoteContext?.inQuote, "Should detect inside double quote");
+      assert.strictEqual(
+        ctx.quoteContext?.quoteChar,
+        '"',
+        "Should identify as double-quote"
+      );
+      assert.strictEqual(
+        ctx.quoteContext?.pathPrefix,
+        "",
+        "Should have empty prefix"
+      );
     });
 
-    it("extracts path prefix inside quote", () => {
+    it("detects partial content inside double-quoted string", () => {
+      const { sql, cursor } = parseCursorPosition('SELECT * FROM "my_dat|"');
+      const ctx = analyzeSQLContext(sql, cursor);
+      assert.ok(ctx.quoteContext?.inQuote, "Should detect inside double quote");
+      assert.strictEqual(ctx.quoteContext?.quoteChar, '"');
+      assert.strictEqual(ctx.quoteContext?.pathPrefix, "my_dat");
+    });
+
+    it("extracts path prefix inside single quote", () => {
       const { sql, cursor } = parseCursorPosition("SELECT * FROM './data/|'");
       const ctx = analyzeSQLContext(sql, cursor);
       assert.ok(ctx.quoteContext?.inQuote);
       assert.strictEqual(ctx.quoteContext?.pathPrefix, "./data/");
     });
 
-    it("extracts partial filename in quote", () => {
+    it("extracts partial filename in single quote", () => {
       const { sql, cursor } = parseCursorPosition("SELECT * FROM 'users|'");
       const ctx = analyzeSQLContext(sql, cursor);
       assert.ok(ctx.quoteContext?.inQuote);
@@ -677,8 +696,145 @@ describe("SQL Context Analyzer", () => {
       const ctx = analyzeSQLContext(sql, cursor);
       assert.ok(
         !ctx.quoteContext?.inQuote,
-        "Should not be in quote after close",
+        "Should not be in quote after close"
       );
+    });
+  });
+
+  describe("Double-quoted Identifier Prefix Extraction", () => {
+    it("extracts prefix with double-quoted database qualifier", () => {
+      const { sql, cursor } = parseCursorPosition('SELECT * FROM "memory".|');
+      const ctx = analyzeSQLContext(sql, cursor);
+      assert.strictEqual(ctx.isAfterDot, true);
+      assert.strictEqual(ctx.dotPrefix, "memory");
+      assert.strictEqual(ctx.prefix, "");
+      assert.strictEqual(ctx.fullQualifiedPrefix, "memory.");
+    });
+
+    it("extracts prefix with double-quoted database and partial table", () => {
+      const { sql, cursor } = parseCursorPosition('SELECT * FROM "memory".us|');
+      const ctx = analyzeSQLContext(sql, cursor);
+      assert.strictEqual(ctx.isAfterDot, true);
+      assert.strictEqual(ctx.dotPrefix, "memory");
+      assert.strictEqual(ctx.prefix, "us");
+      assert.strictEqual(ctx.fullQualifiedPrefix, "memory.us");
+    });
+
+    it("rawQualifiedPrefixLength accounts for quote characters", () => {
+      const { sql, cursor } = parseCursorPosition('SELECT * FROM "memory".|');
+      const ctx = analyzeSQLContext(sql, cursor);
+      // "memory". is 9 characters (with quotes: " m e m o r y " .), but memory. is 7 (without)
+      assert.strictEqual(
+        ctx.rawQualifiedPrefixLength,
+        9,
+        "Should include quote chars in raw length"
+      );
+      assert.strictEqual(
+        ctx.fullQualifiedPrefix.length,
+        7,
+        "Clean prefix should be shorter (no quotes)"
+      );
+    });
+
+    it("rawQualifiedPrefixLength matches for unquoted identifiers", () => {
+      const { sql, cursor } = parseCursorPosition("SELECT * FROM memory.|");
+      const ctx = analyzeSQLContext(sql, cursor);
+      // For unquoted, raw length should equal fullQualifiedPrefix length
+      assert.strictEqual(
+        ctx.rawQualifiedPrefixLength,
+        ctx.fullQualifiedPrefix.length
+      );
+    });
+
+    it("extracts prefix with single-quoted qualifier", () => {
+      const { sql, cursor } = parseCursorPosition(
+        "SELECT * FROM 'categories'.|"
+      );
+      const ctx = analyzeSQLContext(sql, cursor);
+      assert.strictEqual(ctx.isAfterDot, true);
+      assert.strictEqual(ctx.dotPrefix, "categories");
+      assert.strictEqual(ctx.prefix, "");
+      assert.strictEqual(ctx.fullQualifiedPrefix, "categories.");
+    });
+
+    it("extracts prefix with single-quoted schema.table qualifier", () => {
+      const { sql, cursor } = parseCursorPosition("SELECT * FROM 'cms'.|");
+      const ctx = analyzeSQLContext(sql, cursor);
+      assert.strictEqual(ctx.isAfterDot, true);
+      assert.strictEqual(ctx.dotPrefix, "cms");
+      assert.strictEqual(ctx.fullQualifiedPrefix, "cms.");
+    });
+  });
+
+  describe("Qualified Quoted Table Extraction", () => {
+    it("extracts table from single-quoted qualified name", () => {
+      const { sql, cursor } = parseCursorPosition(
+        "SELECT | FROM 'cms'.'categories'"
+      );
+      const ctx = analyzeSQLContext(sql, cursor);
+      assert.strictEqual(ctx.tables.length, 1);
+      assert.strictEqual(ctx.tables[0].name, "cms.categories");
+      assert.strictEqual(ctx.tables[0].type, "table");
+    });
+
+    it("extracts table from double-quoted qualified name", () => {
+      const { sql, cursor } = parseCursorPosition(
+        'SELECT | FROM "cms"."categories"'
+      );
+      const ctx = analyzeSQLContext(sql, cursor);
+      assert.strictEqual(ctx.tables.length, 1);
+      assert.strictEqual(ctx.tables[0].name, "cms.categories");
+      assert.strictEqual(ctx.tables[0].type, "table");
+    });
+
+    it("extracts table from single-quoted qualified name with alias", () => {
+      const { sql, cursor } = parseCursorPosition(
+        "SELECT | FROM 'cms'.'categories' c"
+      );
+      const ctx = analyzeSQLContext(sql, cursor);
+      assert.strictEqual(ctx.tables.length, 1);
+      assert.strictEqual(ctx.tables[0].name, "cms.categories");
+      assert.strictEqual(ctx.tables[0].alias, "c");
+    });
+
+    it("extracts table from mixed qualified name: unquoted.'quoted'", () => {
+      const { sql, cursor } = parseCursorPosition(
+        "SELECT | FROM my_database.'categories'"
+      );
+      const ctx = analyzeSQLContext(sql, cursor);
+      assert.strictEqual(ctx.tables.length, 1);
+      assert.strictEqual(ctx.tables[0].name, "my_database.categories");
+      assert.strictEqual(ctx.tables[0].type, "table");
+    });
+
+    it("extracts table from mixed qualified name: 'quoted'.unquoted", () => {
+      const { sql, cursor } = parseCursorPosition(
+        "SELECT | FROM 'cms'.categories"
+      );
+      const ctx = analyzeSQLContext(sql, cursor);
+      assert.strictEqual(ctx.tables.length, 1);
+      assert.strictEqual(ctx.tables[0].name, "cms.categories");
+      assert.strictEqual(ctx.tables[0].type, "table");
+    });
+
+    it('extracts table from mixed qualified name: unquoted."quoted"', () => {
+      const { sql, cursor } = parseCursorPosition(
+        'SELECT | FROM my_database."categories"'
+      );
+      const ctx = analyzeSQLContext(sql, cursor);
+      assert.strictEqual(ctx.tables.length, 1);
+      assert.strictEqual(ctx.tables[0].name, "my_database.categories");
+      assert.strictEqual(ctx.tables[0].type, "table");
+    });
+
+    it("extracts mixed qualified name with alias", () => {
+      const { sql, cursor } = parseCursorPosition(
+        "SELECT | FROM my_database.'categories' c"
+      );
+      const ctx = analyzeSQLContext(sql, cursor);
+      assert.strictEqual(ctx.tables.length, 1);
+      assert.strictEqual(ctx.tables[0].name, "my_database.categories");
+      assert.strictEqual(ctx.tables[0].alias, "c");
     });
   });
 });

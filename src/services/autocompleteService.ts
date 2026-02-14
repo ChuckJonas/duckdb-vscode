@@ -72,7 +72,7 @@ export async function getAutocompleteSuggestions(
   queryFn: (sql: string) => Promise<Record<string, unknown>[]>,
   fullText: string,
   cursorPosition: number,
-  listFiles?: ListFilesFn,
+  listFiles?: ListFilesFn
 ): Promise<AutocompleteSuggestion[]> {
   // Skip if empty or just whitespace
   if (!fullText.trim()) {
@@ -92,7 +92,7 @@ export async function getAutocompleteSuggestions(
       const columnSuggestions = await getColumnCompletions(
         queryFn,
         context,
-        cursorPosition,
+        cursorPosition
       );
       suggestions.push(...columnSuggestions);
     }
@@ -103,7 +103,7 @@ export async function getAutocompleteSuggestions(
         queryFn,
         context,
         cursorPosition,
-        listFiles,
+        listFiles
       );
       suggestions.push(...tableSuggestions);
     }
@@ -160,7 +160,7 @@ function needsTableCompletions(clause: SQLContext["clause"]): boolean {
 async function getColumnCompletions(
   queryFn: (sql: string) => Promise<Record<string, unknown>[]>,
   context: SQLContext,
-  cursorPosition: number,
+  cursorPosition: number
 ): Promise<AutocompleteSuggestion[]> {
   const suggestions: AutocompleteSuggestion[] = [];
 
@@ -225,14 +225,14 @@ async function getColumnCompletions(
  */
 function findTableByAliasOrName(
   tables: TableReference[],
-  identifier: string,
+  identifier: string
 ): TableReference | undefined {
   const lower = identifier.toLowerCase();
   return tables.find(
     (t) =>
       t.alias?.toLowerCase() === lower ||
       t.name.toLowerCase() === lower ||
-      t.name.split(".").pop()?.toLowerCase() === lower,
+      t.name.split(".").pop()?.toLowerCase() === lower
   );
 }
 
@@ -241,7 +241,7 @@ function findTableByAliasOrName(
  */
 async function getColumnsForTable(
   queryFn: (sql: string) => Promise<Record<string, unknown>[]>,
-  table: TableReference,
+  table: TableReference
 ): Promise<ColumnInfo[]> {
   // For subqueries, use the subquery text as cache key
   const cacheKey =
@@ -358,16 +358,97 @@ async function getTableCompletions(
   queryFn: (sql: string) => Promise<Record<string, unknown>[]>,
   context: SQLContext,
   cursorPosition: number,
-  listFiles?: ListFilesFn,
+  listFiles?: ListFilesFn
 ): Promise<AutocompleteSuggestion[]> {
   const suggestions: AutocompleteSuggestion[] = [];
 
-  // If inside a quoted string, provide file path completions
-  if (context.quoteContext?.inQuote && listFiles) {
+  // If inside a double-quoted identifier (e.g., FROM "|"), provide identifier completions
+  // Double quotes in SQL are for identifiers (table/column names), not file paths
+  if (context.quoteContext?.inQuote && context.quoteContext.quoteChar === '"') {
+    const identPrefix = context.quoteContext.pathPrefix.toLowerCase();
+    const identStart = cursorPosition - context.quoteContext.pathPrefix.length;
+
+    try {
+      // Suggest database names (without trailing dots - we're inside quotes)
+      const dbRows = await queryFn(`
+        SELECT database_name
+        FROM duckdb_databases()
+        WHERE database_name != 'system'
+        ORDER BY database_name
+      `);
+
+      for (const row of dbRows) {
+        const dbName = row.database_name as string;
+        if (!identPrefix || dbName.toLowerCase().startsWith(identPrefix)) {
+          suggestions.push({
+            suggestion: dbName,
+            suggestionStart: identStart,
+            kind: "database",
+            detail: "database",
+          });
+        }
+      }
+
+      // Suggest table names
+      const tableRows = await queryFn(`
+        SELECT table_name, table_type
+        FROM information_schema.tables
+        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+          AND NOT starts_with(table_name, '_cache_')
+        ORDER BY table_name
+        LIMIT 100
+      `);
+
+      for (const row of tableRows) {
+        const tableName = row.table_name as string;
+        const tableType = row.table_type as string;
+        if (!identPrefix || tableName.toLowerCase().startsWith(identPrefix)) {
+          suggestions.push({
+            suggestion: tableName,
+            suggestionStart: identStart,
+            kind: tableType === "VIEW" ? "view" : "table",
+            detail: tableType === "VIEW" ? "view" : "table",
+          });
+        }
+      }
+
+      // Suggest schema names
+      const schemaRows = await queryFn(`
+        SELECT DISTINCT schema_name
+        FROM information_schema.schemata
+        WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'main')
+        ORDER BY schema_name
+        LIMIT 50
+      `);
+
+      for (const row of schemaRows) {
+        const schemaName = row.schema_name as string;
+        if (!identPrefix || schemaName.toLowerCase().startsWith(identPrefix)) {
+          suggestions.push({
+            suggestion: schemaName,
+            suggestionStart: identStart,
+            kind: "schema",
+            detail: "schema",
+          });
+        }
+      }
+    } catch (error) {
+      console.error("🦆 Failed to get identifier completions:", error);
+    }
+
+    return suggestions;
+  }
+
+  // If inside a single-quoted string, provide file path completions
+  if (
+    context.quoteContext?.inQuote &&
+    context.quoteContext.quoteChar === "'" &&
+    listFiles
+  ) {
     const fileSuggestions = await getFilePathCompletions(
       context,
       cursorPosition,
-      listFiles,
+      listFiles
     );
     suggestions.push(...fileSuggestions);
 
@@ -377,6 +458,7 @@ async function getTableCompletions(
         SELECT table_name
         FROM information_schema.tables
         WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+          AND NOT starts_with(table_name, '_cache_')
         ORDER BY table_name
         LIMIT 50
       `);
@@ -407,9 +489,11 @@ async function getTableCompletions(
   }
 
   // Parse the prefix to check for qualified names (db.schema.table)
-  // Use fullQualifiedPrefix which includes the full "db.schema." part
+  // Use fullQualifiedPrefix (quotes stripped) for lookups
   const qualified = parseQualifiedPrefix(context.fullQualifiedPrefix);
   const lowerTablePrefix = qualified.tablePrefix.toLowerCase();
+  // Use rawQualifiedPrefixLength for replacement positioning (includes quote chars)
+  const qualifiedStartOffset = context.rawQualifiedPrefixLength;
 
   // If we have a qualifier (could be database or schema)
   if (qualified.database) {
@@ -421,6 +505,7 @@ async function getTableCompletions(
           FROM information_schema.tables
           WHERE table_catalog = '${qualified.database}'
             AND table_schema = '${qualified.schema}'
+            AND NOT starts_with(table_name, '_cache_')
           ORDER BY table_name
           LIMIT 100
         `);
@@ -435,8 +520,7 @@ async function getTableCompletions(
           ) {
             suggestions.push({
               suggestion: qualified.fullQualifier + tableName,
-              suggestionStart:
-                cursorPosition - context.fullQualifiedPrefix.length,
+              suggestionStart: cursorPosition - qualifiedStartOffset,
               kind: tableType === "VIEW" ? "view" : "table",
               detail: tableType === "VIEW" ? "view" : "table",
             });
@@ -468,8 +552,7 @@ async function getTableCompletions(
           ) {
             suggestions.push({
               suggestion: qualified.fullQualifier + schemaName + ".",
-              suggestionStart:
-                cursorPosition - context.fullQualifiedPrefix.length,
+              suggestionStart: cursorPosition - qualifiedStartOffset,
               kind: "schema",
               detail: "schema",
             });
@@ -482,6 +565,7 @@ async function getTableCompletions(
           FROM information_schema.tables
           WHERE table_catalog = '${qualified.database}'
             AND table_schema NOT IN ('pg_catalog', 'information_schema')
+            AND NOT starts_with(table_name, '_cache_')
           ORDER BY table_name
           LIMIT 100
         `);
@@ -496,8 +580,7 @@ async function getTableCompletions(
           ) {
             suggestions.push({
               suggestion: qualified.fullQualifier + tableName,
-              suggestionStart:
-                cursorPosition - context.fullQualifiedPrefix.length,
+              suggestionStart: cursorPosition - qualifiedStartOffset,
               kind: tableType === "VIEW" ? "view" : "table",
               detail: tableType === "VIEW" ? "view" : "table",
             });
@@ -510,6 +593,7 @@ async function getTableCompletions(
           FROM information_schema.tables
           WHERE table_schema = '${qualified.database}'
             AND table_schema NOT IN ('pg_catalog', 'information_schema')
+            AND NOT starts_with(table_name, '_cache_')
           ORDER BY table_name
           LIMIT 100
         `);
@@ -530,8 +614,7 @@ async function getTableCompletions(
           ) {
             suggestions.push({
               suggestion: fullSuggestion,
-              suggestionStart:
-                cursorPosition - context.fullQualifiedPrefix.length,
+              suggestionStart: cursorPosition - qualifiedStartOffset,
               kind: tableType === "VIEW" ? "view" : "table",
               detail: tableType === "VIEW" ? "view" : "table",
             });
@@ -599,6 +682,7 @@ async function getTableCompletions(
       SELECT table_name, table_type
       FROM information_schema.tables
       WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+        AND NOT starts_with(table_name, '_cache_')
       ORDER BY table_name
       LIMIT 100
     `);
@@ -653,7 +737,7 @@ async function getTableCompletions(
 async function getFilePathCompletions(
   context: SQLContext,
   cursorPosition: number,
-  listFiles: ListFilesFn,
+  listFiles: ListFilesFn
 ): Promise<AutocompleteSuggestion[]> {
   const suggestions: AutocompleteSuggestion[] = [];
 
@@ -708,7 +792,7 @@ async function getFilePathCompletions(
 
       // Only suggest data files and directories
       const isDataFile = /\.(csv|parquet|json|jsonl|tsv|txt|gz)$/i.test(
-        file.name,
+        file.name
       );
 
       if (file.isDirectory || isDataFile) {
@@ -716,8 +800,8 @@ async function getFilePathCompletions(
           dirPath === "."
             ? file.name
             : dirPath === "/"
-              ? "/" + file.name
-              : dirPath + "/" + file.name;
+            ? "/" + file.name
+            : dirPath + "/" + file.name;
 
         suggestions.push({
           suggestion: file.isDirectory ? fullPath + "/" : fullPath,
@@ -775,16 +859,41 @@ const AGGREGATE_FUNCTIONS = [
   { name: "STRING_AGG", detail: "Concatenate strings" },
   { name: "GROUP_CONCAT", detail: "Concatenate strings (alias)" },
   { name: "ARRAY_AGG", detail: "Aggregate into array" },
+  { name: "JSON_AGG", detail: "Aggregate into JSON array" },
   { name: "MEDIAN", detail: "Median value" },
   { name: "MODE", detail: "Most frequent value" },
   { name: "STDDEV", detail: "Standard deviation" },
+  { name: "STDDEV_POP", detail: "Population standard deviation" },
+  { name: "STDDEV_SAMP", detail: "Sample standard deviation" },
   { name: "VARIANCE", detail: "Variance" },
+  { name: "VAR_POP", detail: "Population variance" },
+  { name: "VAR_SAMP", detail: "Sample variance" },
   { name: "COVAR_POP", detail: "Population covariance" },
+  { name: "COVAR_SAMP", detail: "Sample covariance" },
   { name: "CORR", detail: "Correlation coefficient" },
   { name: "APPROX_COUNT_DISTINCT", detail: "Approximate distinct count" },
   { name: "QUANTILE", detail: "Quantile value" },
   { name: "QUANTILE_CONT", detail: "Continuous quantile" },
+  { name: "QUANTILE_DISC", detail: "Discrete quantile" },
   { name: "PERCENTILE_CONT", detail: "Continuous percentile" },
+  { name: "PERCENTILE_DISC", detail: "Discrete percentile" },
+  { name: "BOOL_AND", detail: "Logical AND aggregate" },
+  { name: "BOOL_OR", detail: "Logical OR aggregate" },
+  { name: "BIT_AND", detail: "Bitwise AND aggregate" },
+  { name: "BIT_OR", detail: "Bitwise OR aggregate" },
+  { name: "BIT_XOR", detail: "Bitwise XOR aggregate" },
+  { name: "HISTOGRAM", detail: "Histogram aggregate" },
+  { name: "ARG_MIN", detail: "Value at minimum" },
+  { name: "ARG_MAX", detail: "Value at maximum" },
+  { name: "PRODUCT", detail: "Product of all values" },
+  { name: "KURTOSIS", detail: "Excess kurtosis" },
+  { name: "SKEWNESS", detail: "Skewness" },
+  { name: "ENTROPY", detail: "Log-2 entropy" },
+  { name: "REGR_SLOPE", detail: "Linear regression slope" },
+  { name: "REGR_INTERCEPT", detail: "Linear regression intercept" },
+  { name: "REGR_R2", detail: "R-squared of linear regression" },
+  { name: "FSUM", detail: "Precise floating-point sum" },
+  { name: "FAVG", detail: "Precise floating-point average" },
 ];
 
 /** SQL string functions */
@@ -903,28 +1012,66 @@ const LIST_FUNCTIONS = [
   { name: "LIST_EXTRACT", detail: "Get element from list" },
   { name: "LIST_ELEMENT", detail: "Get element from list (alias)" },
   { name: "LEN", detail: "List length" },
+  { name: "ARRAY_LENGTH", detail: "Array/list length" },
   { name: "LIST_CONCAT", detail: "Concatenate lists" },
+  { name: "LIST_CAT", detail: "Concatenate lists (alias)" },
   { name: "LIST_CONTAINS", detail: "Check if list contains" },
+  { name: "LIST_HAS", detail: "Check if list contains (alias)" },
   { name: "LIST_POSITION", detail: "Find position in list" },
   { name: "LIST_DISTINCT", detail: "Remove duplicates" },
   { name: "LIST_UNIQUE", detail: "Remove duplicates (alias)" },
   { name: "LIST_SORT", detail: "Sort list" },
   { name: "LIST_REVERSE", detail: "Reverse list" },
   { name: "LIST_SLICE", detail: "Slice list" },
+  { name: "LIST_AGGREGATE", detail: "Apply aggregate to list" },
+  { name: "LIST_FILTER", detail: "Filter list with lambda" },
+  { name: "LIST_TRANSFORM", detail: "Transform list with lambda" },
+  { name: "LIST_REDUCE", detail: "Reduce list with lambda" },
+  { name: "LIST_ZIP", detail: "Zip multiple lists" },
+  { name: "FLATTEN", detail: "Flatten nested list" },
   { name: "UNNEST", detail: "Expand list to rows" },
   { name: "GENERATE_SERIES", detail: "Generate sequence" },
   { name: "RANGE", detail: "Generate range" },
+  { name: "ARRAY_TO_STRING", detail: "Join list elements" },
+  { name: "STRING_TO_ARRAY", detail: "Split string to array" },
+];
+
+/** SQL JSON functions */
+const JSON_FUNCTIONS = [
+  { name: "JSON_OBJECT", detail: "Create JSON object" },
+  { name: "JSON_ARRAY", detail: "Create JSON array" },
+  { name: "JSON_EXTRACT", detail: "Extract JSON value" },
+  { name: "JSON_EXTRACT_STRING", detail: "Extract JSON as string" },
+  { name: "JSON_EXTRACT_PATH", detail: "Extract JSON by path" },
+  { name: "JSON_EXTRACT_PATH_TEXT", detail: "Extract JSON path as text" },
+  { name: "JSON_TYPE", detail: "Get JSON value type" },
+  { name: "JSON_VALID", detail: "Check if valid JSON" },
+  { name: "JSON_ARRAY_LENGTH", detail: "Get JSON array length" },
+  { name: "JSON_MERGE_PATCH", detail: "Merge JSON values" },
+  { name: "JSON_KEYS", detail: "Get JSON object keys" },
+  { name: "JSON_CONTAINS", detail: "Check JSON contains value" },
+  { name: "JSON_SERIALIZE", detail: "Serialize to JSON string" },
+  { name: "JSON_TRANSFORM", detail: "Transform JSON structure" },
+  { name: "JSON_GROUP_ARRAY", detail: "Aggregate into JSON array" },
+  { name: "JSON_GROUP_OBJECT", detail: "Aggregate into JSON object" },
+  { name: "JSON_QUOTE", detail: "Quote JSON value" },
+  { name: "TO_JSON", detail: "Convert to JSON" },
+  { name: "FROM_JSON", detail: "Parse from JSON" },
+  { name: "JSON", detail: "Parse JSON string" },
 ];
 
 /** SQL struct/map functions */
 const STRUCT_FUNCTIONS = [
   { name: "STRUCT_PACK", detail: "Create struct" },
   { name: "STRUCT_EXTRACT", detail: "Extract struct field" },
+  { name: "STRUCT_INSERT", detail: "Add/replace struct fields" },
   { name: "ROW", detail: "Create row/struct" },
   { name: "MAP", detail: "Create map" },
   { name: "MAP_KEYS", detail: "Get map keys" },
   { name: "MAP_VALUES", detail: "Get map values" },
   { name: "MAP_EXTRACT", detail: "Get map value by key" },
+  { name: "MAP_FROM_ENTRIES", detail: "Create map from key-value pairs" },
+  { name: "MAP_ENTRIES", detail: "Get map as key-value pairs" },
   { name: "ELEMENT_AT", detail: "Get element at index/key" },
 ];
 
@@ -943,8 +1090,9 @@ const WINDOW_FUNCTIONS = [
   { name: "CUME_DIST", detail: "Cumulative distribution" },
 ];
 
-/** SQL keywords by context */
+/** SQL keywords by context (includes within-clause + transition keywords) */
 const SELECT_KEYWORDS = [
+  // Within SELECT clause
   "DISTINCT",
   "ALL",
   "AS",
@@ -963,9 +1111,12 @@ const SELECT_KEYWORDS = [
   "FOLLOWING",
   "CURRENT",
   "ROW",
+  // Transition keywords (what comes after SELECT)
+  "FROM",
+  "INTO",
 ];
 const FROM_KEYWORDS = [
-  "FROM",
+  // Within FROM clause
   "JOIN",
   "LEFT",
   "RIGHT",
@@ -977,9 +1128,35 @@ const FROM_KEYWORDS = [
   "USING",
   "NATURAL",
   "LATERAL",
+  // Transition keywords (what comes after FROM)
+  "WHERE",
+  "GROUP BY",
+  "ORDER BY",
+  "HAVING",
+  "LIMIT",
+  "UNION",
+  "INTERSECT",
+  "EXCEPT",
+];
+const JOIN_KEYWORDS = [
+  // Within JOIN clause
+  "ON",
+  "USING",
+  // Transition keywords
+  "WHERE",
+  "GROUP BY",
+  "ORDER BY",
+  "HAVING",
+  "LIMIT",
+  "JOIN",
+  "LEFT JOIN",
+  "RIGHT JOIN",
+  "INNER JOIN",
+  "CROSS JOIN",
+  "FULL JOIN",
 ];
 const WHERE_KEYWORDS = [
-  "WHERE",
+  // Within WHERE clause
   "AND",
   "OR",
   "NOT",
@@ -995,44 +1172,129 @@ const WHERE_KEYWORDS = [
   "ANY",
   "ALL",
   "SOME",
+  // Transition keywords (what comes after WHERE)
+  "GROUP BY",
+  "ORDER BY",
+  "HAVING",
+  "LIMIT",
+  "UNION",
+  "INTERSECT",
+  "EXCEPT",
+];
+const ON_KEYWORDS = [
+  // Within ON clause
+  "AND",
+  "OR",
+  "NOT",
+  "IN",
+  "BETWEEN",
+  "IS",
+  "NULL",
+  "TRUE",
+  "FALSE",
+  // Transition keywords
+  "WHERE",
+  "GROUP BY",
+  "ORDER BY",
+  "HAVING",
+  "LIMIT",
+  "JOIN",
+  "LEFT JOIN",
+  "RIGHT JOIN",
+  "INNER JOIN",
+  "CROSS JOIN",
+  "FULL JOIN",
 ];
 const GROUP_KEYWORDS = [
-  "GROUP",
+  // Within GROUP BY clause
   "BY",
-  "HAVING",
   "ROLLUP",
   "CUBE",
   "GROUPING",
   "SETS",
+  // Transition keywords
+  "HAVING",
+  "ORDER BY",
+  "LIMIT",
+  "UNION",
+  "INTERSECT",
+  "EXCEPT",
+];
+const HAVING_KEYWORDS = [
+  // Within HAVING clause
+  "AND",
+  "OR",
+  "NOT",
+  "IN",
+  "BETWEEN",
+  "LIKE",
+  "ILIKE",
+  "IS",
+  "NULL",
+  // Transition keywords
+  "ORDER BY",
+  "LIMIT",
+  "UNION",
+  "INTERSECT",
+  "EXCEPT",
 ];
 const ORDER_KEYWORDS = [
-  "ORDER",
+  // Within ORDER BY clause
   "BY",
   "ASC",
   "DESC",
   "NULLS",
   "FIRST",
   "LAST",
+  // Transition keywords
   "LIMIT",
   "OFFSET",
-];
-const OTHER_KEYWORDS = [
   "UNION",
   "INTERSECT",
   "EXCEPT",
+];
+const OTHER_KEYWORDS = [
+  // Statement-level keywords
+  "SELECT",
+  "SUMMARIZE",
+  "DESCRIBE",
+  "SHOW",
   "WITH",
   "RECURSIVE",
-  "AS",
-  "SELECT",
+  "FROM",
+  "WHERE",
+  "GROUP BY",
+  "ORDER BY",
+  "HAVING",
+  "LIMIT",
+  // DML
   "INSERT",
   "UPDATE",
   "DELETE",
+  "COPY",
+  "EXPORT",
+  "IMPORT",
+  // DDL
   "CREATE",
   "DROP",
   "ALTER",
   "TABLE",
   "VIEW",
   "INDEX",
+  "SCHEMA",
+  "TYPE",
+  "SEQUENCE",
+  "MACRO",
+  // Database management
+  "ATTACH",
+  "DETACH",
+  "USE",
+  "PRAGMA",
+  // Set operations
+  "UNION",
+  "INTERSECT",
+  "EXCEPT",
+  "AS",
 ];
 
 /**
@@ -1040,7 +1302,7 @@ const OTHER_KEYWORDS = [
  */
 function getKeywordCompletions(
   context: SQLContext,
-  cursorPosition: number,
+  cursorPosition: number
 ): AutocompleteSuggestion[] {
   const suggestions: AutocompleteSuggestion[] = [];
   const prefix = context.prefix.toLowerCase();
@@ -1057,8 +1319,9 @@ function getKeywordCompletions(
       ...NUMERIC_FUNCTIONS,
       ...CONDITIONAL_FUNCTIONS,
       ...LIST_FUNCTIONS,
+      ...JSON_FUNCTIONS,
       ...STRUCT_FUNCTIONS,
-      ...WINDOW_FUNCTIONS,
+      ...WINDOW_FUNCTIONS
     );
   } else if (
     context.clause === "where" ||
@@ -1072,7 +1335,8 @@ function getKeywordCompletions(
       ...NUMERIC_FUNCTIONS,
       ...CONDITIONAL_FUNCTIONS,
       ...LIST_FUNCTIONS,
-      ...STRUCT_FUNCTIONS,
+      ...JSON_FUNCTIONS,
+      ...STRUCT_FUNCTIONS
     );
   } else if (context.clause === "group_by") {
     // In GROUP BY, suggest expression functions (non-aggregate)
@@ -1080,7 +1344,7 @@ function getKeywordCompletions(
       ...STRING_FUNCTIONS,
       ...DATE_FUNCTIONS,
       ...NUMERIC_FUNCTIONS,
-      ...CONDITIONAL_FUNCTIONS,
+      ...CONDITIONAL_FUNCTIONS
     );
   }
 
@@ -1109,16 +1373,22 @@ function getKeywordCompletions(
         keywords = SELECT_KEYWORDS;
         break;
       case "from":
-      case "join":
         keywords = FROM_KEYWORDS;
         break;
+      case "join":
+        keywords = JOIN_KEYWORDS;
+        break;
       case "where":
-      case "on":
         keywords = WHERE_KEYWORDS;
         break;
+      case "on":
+        keywords = ON_KEYWORDS;
+        break;
       case "group_by":
-      case "having":
         keywords = GROUP_KEYWORDS;
+        break;
+      case "having":
+        keywords = HAVING_KEYWORDS;
         break;
       case "order_by":
         keywords = ORDER_KEYWORDS;
@@ -1146,7 +1416,7 @@ function getKeywordCompletions(
  */
 function getFallbackCompletions(
   cursorPosition: number,
-  prefix: string,
+  prefix: string
 ): AutocompleteSuggestion[] {
   const suggestions: AutocompleteSuggestion[] = [];
   const lowerPrefix = prefix.toLowerCase();
@@ -1173,7 +1443,7 @@ function getFallbackCompletions(
  * Determine the completion kind based on the suggestion
  */
 export function inferCompletionKind(
-  suggestion: string,
+  suggestion: string
 ): "keyword" | "function" | "table" | "column" | "file" {
   // All uppercase with only letters/underscores = keyword
   if (suggestion === suggestion.toUpperCase() && /^[A-Z_]+$/.test(suggestion)) {
@@ -1192,7 +1462,7 @@ export function inferCompletionKind(
  */
 function filterAndDedupe(
   suggestions: AutocompleteSuggestion[],
-  prefix: string,
+  prefix: string
 ): AutocompleteSuggestion[] {
   const seen = new Set<string>();
   const filtered: AutocompleteSuggestion[] = [];
@@ -1243,12 +1513,12 @@ export function clearColumnCache(): void {
  */
 export async function getAutocompleteSuggestionsLegacy(
   queryFn: (sql: string) => Promise<Record<string, unknown>[]>,
-  textUntilCursor: string,
+  textUntilCursor: string
 ): Promise<{ suggestion: string; suggestionStart: number }[]> {
   const suggestions = await getAutocompleteSuggestions(
     queryFn,
     textUntilCursor,
-    textUntilCursor.length,
+    textUntilCursor.length
   );
 
   return suggestions.map((s) => ({

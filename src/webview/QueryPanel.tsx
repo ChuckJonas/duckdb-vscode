@@ -151,7 +151,7 @@ function MultiStatementContainer({
   return (
     <div className="multi-results-container">
       {/* Header with expand/collapse all */}
-      <div className="multi-results-header">
+      <div className="panel-header multi-results-header">
         <div className="multi-results-info">
           <span className="multi-results-count">
             {showAllStatements || !hasNonResultStatements
@@ -171,8 +171,8 @@ function MultiStatementContainer({
               label="DDL/DML"
             />
           )}
-          <button className="multi-results-btn" onClick={expandAll}>Expand All</button>
-          <button className="multi-results-btn" onClick={collapseAll}>Collapse All</button>
+          <button className="btn btn-surface multi-results-btn" onClick={expandAll}>Expand All</button>
+          <button className="btn btn-surface multi-results-btn" onClick={collapseAll}>Collapse All</button>
           <button
             className={`refresh-btn ${isRefreshing ? 'refreshing' : ''}`}
             onClick={handleRefresh}

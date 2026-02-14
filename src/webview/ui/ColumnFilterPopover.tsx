@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X } from 'lucide-react';
+import { IconButton } from './IconButton';
 import { ColumnFilter, FilterOperator, generateFilterId } from './FilterBar';
 
 interface DistinctValue {
@@ -52,6 +53,7 @@ export function ColumnFilterPopover({
   position,
 }: ColumnFilterPopoverProps) {
   const popoverRef = useRef<HTMLDivElement>(null);
+  const [adjustedPosition, setAdjustedPosition] = useState(position);
   const [searchTerm, setSearchTerm] = useState('');
   const [selectedValues, setSelectedValues] = useState<Set<string>>(new Set());
   const [operator, setOperator] = useState<FilterOperator>('eq');
@@ -59,9 +61,35 @@ export function ColumnFilterPopover({
   const [rangeMin, setRangeMin] = useState('');
   const [rangeMax, setRangeMax] = useState('');
   
+  // Adjust position to keep popover within viewport
+  useEffect(() => {
+    const el = popoverRef.current;
+    if (!el) return;
+    const rect = el.getBoundingClientRect();
+    const parent = el.offsetParent as HTMLElement | null;
+    const parentRect = parent?.getBoundingClientRect() || { left: 0, top: 0 };
+    let { left, top } = position;
+
+    // If overflowing right edge, shift left so it stays in view
+    if (rect.right > window.innerWidth) {
+      const overflow = rect.right - window.innerWidth;
+      left = Math.max(0, left - overflow - 8);
+    }
+
+    // If overflowing bottom edge, flip above the trigger
+    if (rect.bottom > window.innerHeight) {
+      const overflow = rect.bottom - window.innerHeight;
+      top = Math.max(0, top - overflow - 8);
+    }
+
+    if (left !== position.left || top !== position.top) {
+      setAdjustedPosition({ left, top });
+    }
+  }, [position]);
+
   const isNumeric = isNumericType(columnType);
   const isDate = isDateType(columnType);
-  const showMultiSelect = cardinality <= 100 && cardinality > 0;
+  const showMultiSelect = cardinality <= 250 && cardinality > 0;
   
   // Reset form when column changes
   const handleColumnChange = (newColumn: string) => {
@@ -182,9 +210,9 @@ export function ColumnFilterPopover({
     <div 
       ref={popoverRef}
       className="column-filter-popover"
-      style={{ top: position.top, left: position.left }}
+      style={{ top: adjustedPosition.top, left: adjustedPosition.left }}
     >
-      <div className="column-filter-header">
+      <div className="panel-header column-filter-header">
         {columns && columns.length > 1 ? (
           <div className="column-filter-title-select">
             <span className="column-filter-label">Filter:</span>
@@ -201,9 +229,7 @@ export function ColumnFilterPopover({
         ) : (
           <span className="column-filter-title">Filter: {column}</span>
         )}
-        <button className="column-filter-close" onClick={onClose}>
-          <X size={14} />
-        </button>
+        <IconButton icon={<X size={14} />} tooltip="Close" onClick={onClose} />
       </div>
       
       <div className="column-filter-body">
@@ -213,7 +239,7 @@ export function ColumnFilterPopover({
             <div className="column-filter-search-wrapper">
               <input
                 type="text"
-                className="column-filter-search"
+                className="input-base column-filter-search"
                 placeholder="Search values..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
@@ -222,13 +248,13 @@ export function ColumnFilterPopover({
             
             <div className="column-filter-select-actions">
               <button 
-                className="column-filter-select-btn" 
+                className="btn btn-ghost column-filter-select-btn" 
                 onClick={handleSelectAll}
               >
                 All
               </button>
               <button 
-                className="column-filter-select-btn" 
+                className="btn btn-ghost column-filter-select-btn" 
                 onClick={handleSelectNone}
               >
                 None
@@ -269,7 +295,7 @@ export function ColumnFilterPopover({
           
           {/* Operator select */}
           <select 
-            className="column-filter-operator"
+            className="input-base column-filter-operator"
             value={operator}
             onChange={(e) => setOperator(e.target.value as FilterOperator)}
           >
@@ -288,7 +314,7 @@ export function ColumnFilterPopover({
           {operator !== 'is_null' && operator !== 'is_not_null' && (
             <input
               type={isNumeric ? 'number' : isDate ? 'date' : 'text'}
-              className="column-filter-input"
+              className="input-base column-filter-input"
               placeholder={isDate ? '' : 'Enter value...'}
               value={textValue}
               onChange={(e) => setTextValue(e.target.value)}
@@ -303,7 +329,7 @@ export function ColumnFilterPopover({
             <div className="column-filter-range">
               <input
                 type={isNumeric ? 'number' : 'date'}
-                className="column-filter-range-input"
+                className="input-base column-filter-range-input"
                 placeholder="Min"
                 value={rangeMin}
                 onChange={(e) => setRangeMin(e.target.value)}
@@ -311,7 +337,7 @@ export function ColumnFilterPopover({
               <span className="column-filter-range-sep">–</span>
               <input
                 type={isNumeric ? 'number' : 'date'}
-                className="column-filter-range-input"
+                className="input-base column-filter-range-input"
                 placeholder="Max"
                 value={rangeMax}
                 onChange={(e) => setRangeMax(e.target.value)}
@@ -324,13 +350,13 @@ export function ColumnFilterPopover({
         <div className="column-filter-section">
           <div className="column-filter-quick">
             <button
-              className={`column-filter-quick-btn ${operator === 'is_null' ? 'active' : ''}`}
+              className={`btn btn-ghost column-filter-quick-btn ${operator === 'is_null' ? 'active' : ''}`}
               onClick={() => setOperator(operator === 'is_null' ? 'eq' : 'is_null')}
             >
               Is NULL
             </button>
             <button
-              className={`column-filter-quick-btn ${operator === 'is_not_null' ? 'active' : ''}`}
+              className={`btn btn-ghost column-filter-quick-btn ${operator === 'is_not_null' ? 'active' : ''}`}
               onClick={() => setOperator(operator === 'is_not_null' ? 'eq' : 'is_not_null')}
             >
               Not NULL
@@ -340,11 +366,11 @@ export function ColumnFilterPopover({
       </div>
       
       <div className="column-filter-footer">
-        <button className="column-filter-cancel-btn" onClick={onClose}>
+        <button className="btn btn-ghost column-filter-cancel-btn" onClick={onClose}>
           Cancel
         </button>
         <button 
-          className="column-filter-apply-btn" 
+          className="btn btn-primary column-filter-apply-btn" 
           onClick={handleApply}
           disabled={!canApply}
         >

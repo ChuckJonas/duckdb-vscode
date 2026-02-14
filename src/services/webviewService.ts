@@ -398,6 +398,10 @@ function setupMessageHandler(
         case "refreshQuery":
           await handleRefreshQuery(panel, sourceId, pageSize, maxCopyRows, db);
           break;
+
+        case "goToSource":
+          await vscode.commands.executeCommand("duckdb.results.goToSource");
+          break;
       }
     },
     undefined,

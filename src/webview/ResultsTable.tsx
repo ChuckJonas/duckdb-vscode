@@ -16,6 +16,10 @@ import {
 import { ColumnFilterPopover } from './ui/ColumnFilterPopover';
 import { formatValue, formatTableAsText } from './utils/format';
 import { Copy, Download, ExternalLink, ChevronDown, Filter, Code, BarChart2, ArrowUp, ArrowDown, ChevronsUpDown, RefreshCw } from 'lucide-react';
+import { IconButton } from './ui/IconButton';
+import { PopoverMenu } from './ui/PopoverMenu';
+import { useToast } from './ui/useToast';
+import { Toast } from './ui/Toast';
 import './styles.css';
 
 // Get VS Code API (exposed globally from index.tsx)
@@ -78,17 +82,12 @@ export function ResultsTable({
   interface Selection { start: CellPosition; end: CellPosition; }
   const [selection, setSelection] = useState<Selection | null>(null);
   
-  // Toast message
-  const [toast, setToast] = useState<string | null>(null);
+  // Toast notification
+  const toast = useToast();
   
   // Cell expansion modal
   const [expandedCell, setExpandedCell] = useState<{ value: unknown; column: string } | null>(null);
   
-  // Dropdown menus
-  const [showExportMenu, setShowExportMenu] = useState(false);
-  const [showOpenMenu, setShowOpenMenu] = useState(false);
-  const exportMenuRef = useRef<HTMLDivElement>(null);
-  const openMenuRef = useRef<HTMLDivElement>(null);
   
   // Columns panel - default to 35% of window width, min 320, max 800
   const [showColumnsPanel, setShowColumnsPanel] = useState(false);
@@ -192,12 +191,12 @@ export function ResultsTable({
         setColumnCardinality(message.cardinality || 0);
         setLoadingDistinct(false);
       } else if (message.type === 'filterError' && message.cacheId === cacheId) {
-        setToast(message.error || 'Filter error');
+        toast.show(message.error || 'Filter error');
         setIsLoadingPage(false);
       } else if (message.type === 'copyData') {
         setCopyLoading(false);
         if (message.error) {
-          setToast('Copy failed');
+          toast.show('Copy failed');
         } else if (message.data) {
           const { columns: copyColumns, rows: copyRows, maxCopyRows: limit } = message.data;
           const text = formatTableAsText(copyColumns, copyRows);
@@ -206,14 +205,14 @@ export function ResultsTable({
             const label = rowCount >= limit 
               ? `${rowCount.toLocaleString()} rows (limit)` 
               : `${rowCount.toLocaleString()} rows`;
-            setToast(`Copied ${label}`);
+            toast.show(`Copied ${label}`);
           }).catch(() => {
-            setToast('Failed to copy');
+            toast.show('Failed to copy');
           });
         }
       } else if (message.type === 'refreshError') {
         setIsRefreshing(false);
-        setToast(message.error || 'Refresh failed');
+        toast.show(message.error || 'Refresh failed');
       }
     };
     window.addEventListener('message', handleMessage);
@@ -305,26 +304,8 @@ export function ResultsTable({
     }
   }, [cacheId]);
 
-  // Close menus when clicking outside
-  useEffect(() => {
-    const handleClickOutside = (e: MouseEvent) => {
-      if (exportMenuRef.current && !exportMenuRef.current.contains(e.target as Node)) {
-        setShowExportMenu(false);
-      }
-      if (openMenuRef.current && !openMenuRef.current.contains(e.target as Node)) {
-        setShowOpenMenu(false);
-      }
-    };
-    if (showExportMenu || showOpenMenu) {
-      document.addEventListener('mousedown', handleClickOutside);
-    }
-    return () => document.removeEventListener('mousedown', handleClickOutside);
-  }, [showExportMenu, showOpenMenu]);
-
   // Handle export/open request
   const handleExport = useCallback((format: 'csv' | 'parquet' | 'json' | 'jsonl' | 'csv-tab' | 'json-tab') => {
-    setShowExportMenu(false);
-    setShowOpenMenu(false);
     const vscode = getVscodeApi();
     if (vscode) {
       vscode.postMessage({ type: 'export', cacheId, format });
@@ -413,21 +394,15 @@ export function ResultsTable({
     setColumnWidths(prev => ({ ...prev, [column]: Math.max(50, width) }));
   }, []);
 
-  // Show toast notification
-  const showToast = useCallback((message: string) => {
-    setToast(message);
-    setTimeout(() => setToast(null), 2000);
-  }, []);
-
   // Copy to clipboard (for current page selection)
   const copyToClipboard = useCallback(async (text: string, label: string) => {
     try {
       await navigator.clipboard.writeText(text);
-      showToast(`Copied ${label}`);
+      toast.show(`Copied ${label}`);
     } catch {
-      showToast('Failed to copy');
+      toast.show('Failed to copy');
     }
-  }, [showToast]);
+  }, [toast]);
 
   // Copy full table from server (up to maxCopyRows)
   const copyFullTable = useCallback(() => {
@@ -452,6 +427,14 @@ export function ResultsTable({
       setIsRefreshing(false);
     }
   }, [isRefreshing]);
+
+  // Handle go to source - open the source file in the editor
+  const handleGoToSource = useCallback(() => {
+    const vscode = getVscodeApi();
+    if (vscode) {
+      vscode.postMessage({ type: 'goToSource' });
+    }
+  }, []);
 
   // Selection helpers (work on current page)
   const isCellSelected = useCallback((rowIdx: number, colIdx: number): boolean => {
@@ -657,7 +640,7 @@ export function ResultsTable({
   return (
     <div className={`results-container ${isCollapsible ? 'collapsible' : ''} ${!hasResults ? 'no-results' : ''}`}>
       {/* Toast Notification */}
-      {toast && <div className="toast">{toast}</div>}
+      <Toast message={toast.message} />
       
       {/* Loading overlay */}
       {isLoadingPage && (
@@ -699,6 +682,7 @@ export function ResultsTable({
           sql={sql}
           onClose={() => setShowSqlModal(false)}
           onCopy={(text) => copyToClipboard(text, 'SQL')}
+          onGoToSource={handleGoToSource}
         />
       )}
 
@@ -849,19 +833,22 @@ export function ResultsTable({
         // SELECT with 0 rows - show column headers
         <div className="empty-results">
           <div className="table-wrapper">
-            <table className="results-table">
+            <table>
               <thead>
                 <tr>
+                  <th className="row-number-header">#</th>
                   {columns.map((col, idx) => (
-                    <th key={idx} className="column-header">
-                      <span className="column-name">{col}</span>
+                    <th key={idx}>
+                      <div className="th-content">
+                        <span className="col-name">{col}</span>
+                      </div>
                     </th>
                   ))}
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td colSpan={columns.length} className="empty-row-message">
+                  <td colSpan={columns.length + 1} className="empty-row-message">
                     0 rows returned
                   </td>
                 </tr>
@@ -952,7 +939,7 @@ export function ResultsTable({
           {totalPages > 1 && (
             <div className="pagination">
               <button 
-                className="pagination-btn"
+                className="btn btn-surface pagination-btn"
                 onClick={() => goToPage(1)}
                 disabled={currentPageNum === 1 || isLoadingPage}
                 title="First page"
@@ -960,7 +947,7 @@ export function ResultsTable({
                 ⟨⟨
               </button>
               <button 
-                className="pagination-btn"
+                className="btn btn-surface pagination-btn"
                 onClick={() => goToPage(currentPageNum - 1)}
                 disabled={currentPageNum === 1 || isLoadingPage}
                 title="Previous page"
@@ -971,7 +958,7 @@ export function ResultsTable({
                 {currentPageNum} / {totalPages}
               </span>
               <button 
-                className="pagination-btn"
+                className="btn btn-surface pagination-btn"
                 onClick={() => goToPage(currentPageNum + 1)}
                 disabled={currentPageNum === totalPages || isLoadingPage}
                 title="Next page"
@@ -979,7 +966,7 @@ export function ResultsTable({
                 ⟩
               </button>
               <button 
-                className="pagination-btn"
+                className="btn btn-surface pagination-btn"
                 onClick={() => goToPage(totalPages)}
                 disabled={currentPageNum === totalPages || isLoadingPage}
                 title="Last page"
@@ -991,48 +978,31 @@ export function ResultsTable({
           
           {/* Actions */}
           <div className="footer-actions">
-          <button 
-            className="footer-btn icon-only"
+          <IconButton
+            icon={<Copy size={14} />}
+            tooltip={`Copy table (up to ${maxCopyRows.toLocaleString()} rows)`}
             onClick={copyFullTable}
             disabled={copyLoading}
-            title={`Copy table (up to ${maxCopyRows.toLocaleString()} rows)`}
-          >
-            <Copy size={14} />
-          </button>
-          <div className="export-dropdown" ref={exportMenuRef}>
-            <button 
-              className="footer-btn icon-only"
-              onClick={() => { setShowExportMenu(!showExportMenu); setShowOpenMenu(false); }}
-              title="Export to file"
-            >
-              <Download size={14} />
+            tooltipPosition="top"
+          />
+          <PopoverMenu trigger={
+            <IconButton icon={<Download size={14} />} tooltip="Export to file">
               <ChevronDown size={12} />
-            </button>
-            {showExportMenu && (
-              <div className="export-menu">
-                <button onClick={() => handleExport('csv')}>CSV</button>
-                <button onClick={() => handleExport('parquet')}>Parquet</button>
-                <button onClick={() => handleExport('json')}>JSON</button>
-                <button onClick={() => handleExport('jsonl')}>JSONL</button>
-              </div>
-            )}
-          </div>
-          <div className="export-dropdown" ref={openMenuRef}>
-            <button 
-              className="footer-btn icon-only"
-              onClick={() => { setShowOpenMenu(!showOpenMenu); setShowExportMenu(false); }}
-              title={`Open in new tab (up to ${maxCopyRows.toLocaleString()} rows)`}
-            >
-              <ExternalLink size={14} />
+            </IconButton>
+          }>
+            <button onClick={() => handleExport('csv')}>CSV</button>
+            <button onClick={() => handleExport('parquet')}>Parquet</button>
+            <button onClick={() => handleExport('json')}>JSON</button>
+            <button onClick={() => handleExport('jsonl')}>JSONL</button>
+          </PopoverMenu>
+          <PopoverMenu trigger={
+            <IconButton icon={<ExternalLink size={14} />} tooltip={`Open in new tab (up to ${maxCopyRows.toLocaleString()} rows)`}>
               <ChevronDown size={12} />
-            </button>
-            {showOpenMenu && (
-              <div className="export-menu">
-                <button onClick={() => handleExport('csv-tab')}>CSV</button>
-                <button onClick={() => handleExport('json-tab')}>JSON</button>
-              </div>
-            )}
-          </div>
+            </IconButton>
+          }>
+            <button onClick={() => handleExport('csv-tab')}>CSV</button>
+            <button onClick={() => handleExport('json-tab')}>JSON</button>
+          </PopoverMenu>
         </div>
       </div>
       )}
@@ -1173,10 +1143,15 @@ interface SqlModalProps {
   sql: string;
   onClose: () => void;
   onCopy: (text: string) => void;
+  onGoToSource?: () => void;
   title?: string;
 }
 
-function SqlModal({ sql, onClose, onCopy, title = "SQL" }: SqlModalProps) {
+function SqlModal({ sql, onClose, onCopy, onGoToSource, title = "SQL" }: SqlModalProps) {
+  const actions = onGoToSource ? [
+    { icon: <ExternalLink size={14} />, label: 'Go to Source File', onClick: onGoToSource },
+  ] : undefined;
+
   return (
     <Modal
       title={title}
@@ -1184,6 +1159,7 @@ function SqlModal({ sql, onClose, onCopy, title = "SQL" }: SqlModalProps) {
       onCopy={() => onCopy(sql)}
       size={`${sql.length.toLocaleString()} chars`}
       className="sql-modal"
+      actions={actions}
     >
       <pre className="modal-content modal-sql">
         <SqlSyntaxHighlight sql={sql} />

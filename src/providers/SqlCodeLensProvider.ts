@@ -54,7 +54,7 @@ export class SqlCodeLensProvider implements vscode.CodeLensProvider {
           title: `$(database) ${displayName}`,
           command: "duckdb.selectDatabase",
           tooltip: "Click to switch database",
-        }),
+        })
       );
 
       // Run All button
@@ -63,7 +63,7 @@ export class SqlCodeLensProvider implements vscode.CodeLensProvider {
           title: "$(play) Run All",
           command: "duckdb.executeQuery",
           tooltip: "Execute all SQL statements in this file",
-        }),
+        })
       );
     }
 
@@ -82,7 +82,7 @@ export class SqlCodeLensProvider implements vscode.CodeLensProvider {
             command: "duckdb.runStatement",
             arguments: [document.uri, stmt.startOffset, stmt.endOffset],
             tooltip: `Execute: ${preview}`,
-          }),
+          })
         );
       }
     }
@@ -275,14 +275,17 @@ function getStatementPreview(sql: string): string {
  * Register the CodeLens provider
  */
 export function registerSqlCodeLens(
-  context: vscode.ExtensionContext,
+  context: vscode.ExtensionContext
 ): SqlCodeLensProvider {
   const provider = new SqlCodeLensProvider();
 
   // Register for SQL files
   const disposable = vscode.languages.registerCodeLensProvider(
-    { language: "sql", scheme: "file" },
-    provider,
+    [
+      { language: "sql", scheme: "file" },
+      { language: "sql", scheme: "untitled" },
+    ],
+    provider
   );
 
   context.subscriptions.push(disposable);

@@ -58,17 +58,19 @@ export interface SQLContext {
   isAfterDot: boolean;
   /** The identifier before the dot (e.g., "u" in "u.name") */
   dotPrefix?: string;
-  /** Full qualified prefix including dots (e.g., "db.schema." or "db.schema.tab") */
+  /** Full qualified prefix including dots, with quotes stripped (e.g., "db.schema." or "db.schema.tab") */
   fullQualifiedPrefix: string;
-  /** Quote context for file path completions */
+  /** Raw character length of qualified prefix including any double quotes (for replacement positioning) */
+  rawQualifiedPrefixLength: number;
+  /** Quote context for completions inside quoted strings */
   quoteContext?: {
     /** True if cursor is inside a quoted string */
     inQuote: boolean;
-    /** The quote character (' or ") */
-    quoteChar: string;
+    /** The quote character (' for file paths, " for identifiers) */
+    quoteChar: "'" | '"';
     /** Position where the quote started */
     quoteStart: number;
-    /** The path typed so far inside the quote */
+    /** The text typed so far inside the quote */
     pathPrefix: string;
   };
 }
@@ -105,7 +107,7 @@ export function parseCursorPosition(sqlWithCursor: string): {
  */
 export function analyzeSQLContext(
   sql: string,
-  cursorPosition: number,
+  cursorPosition: number
 ): SQLContext {
   // Default empty context
   const defaultContext: SQLContext = {
@@ -115,6 +117,7 @@ export function analyzeSQLContext(
     prefix: "",
     isAfterDot: false,
     fullQualifiedPrefix: "",
+    rawQualifiedPrefixLength: 0,
   };
 
   if (!sql || sql.trim().length === 0) {
@@ -132,10 +135,13 @@ export function analyzeSQLContext(
   const localCursor = cursorPosition - statement.start;
 
   // Step 4: Extract prefix (partial word at cursor)
-  const { prefix, isAfterDot, dotPrefix, fullQualifiedPrefix } = extractPrefix(
-    statement.text,
-    localCursor,
-  );
+  const {
+    prefix,
+    isAfterDot,
+    dotPrefix,
+    fullQualifiedPrefix,
+    rawQualifiedPrefixLength,
+  } = extractPrefix(statement.text, localCursor);
 
   // Step 5: Detect which clause we're in
   const clause = detectClause(statement.text, localCursor);
@@ -154,20 +160,26 @@ export function analyzeSQLContext(
     isAfterDot,
     dotPrefix,
     fullQualifiedPrefix,
+    rawQualifiedPrefixLength,
     quoteContext,
   };
 }
 
 /**
- * Detect if cursor is inside a quoted string (for file path completions)
+ * Detect if cursor is inside a quoted string.
+ *
+ * - Single quotes (') → file path / string literal context
+ * - Double quotes (") → SQL identifier context (table/column names)
+ *
+ * The completion service uses quoteChar to determine what kind of
+ * completions to provide.
  */
 function detectQuoteContext(
   statement: string,
-  cursor: number,
+  cursor: number
 ): SQLContext["quoteContext"] {
   const beforeCursor = statement.slice(0, cursor);
 
-  // Count unescaped quotes to determine if we're inside a quote
   let inSingleQuote = false;
   let inDoubleQuote = false;
   let quoteStart = -1;
@@ -201,7 +213,7 @@ function detectQuoteContext(
     return undefined;
   }
 
-  const quoteChar = inSingleQuote ? "'" : '"';
+  const quoteChar = inSingleQuote ? ("'" as const) : ('"' as const);
   const pathPrefix = beforeCursor.slice(quoteStart + 1);
 
   return {
@@ -228,7 +240,7 @@ interface StatementBounds {
  */
 function findTopLevelStatement(
   sql: string,
-  cursorPosition: number,
+  cursorPosition: number
 ): StatementBounds {
   const statements: StatementBounds[] = [];
   let start = 0;
@@ -310,7 +322,7 @@ function findTopLevelStatement(
  */
 function findCurrentStatement(
   sql: string,
-  cursorPosition: number,
+  cursorPosition: number
 ): StatementBounds {
   // Simple approach: split by semicolons (respecting quotes)
   // Then find which statement contains the cursor
@@ -385,7 +397,7 @@ function findCurrentStatement(
       return findInnermostQuery(
         stmt.text,
         cursorPosition - stmt.start,
-        stmt.start,
+        stmt.start
       );
     }
   }
@@ -400,7 +412,7 @@ function findCurrentStatement(
 function findInnermostQuery(
   statement: string,
   localCursor: number,
-  globalOffset: number,
+  globalOffset: number
 ): StatementBounds {
   // Track parenthesis depth and SELECT positions
   let depth = 0;
@@ -505,49 +517,72 @@ interface PrefixInfo {
   prefix: string;
   isAfterDot: boolean;
   dotPrefix?: string;
-  /** Full qualified prefix including dots (e.g., "db.schema." or "db.schema.tab") */
+  /** Full qualified prefix including dots, with quotes stripped (e.g., "db.schema." or "db.schema.tab") */
   fullQualifiedPrefix: string;
+  /** Raw character length of the qualified prefix including any double quotes (for replacement positioning) */
+  rawQualifiedPrefixLength: number;
 }
 
 /**
- * Extract the partial word at cursor position
+ * Strip single and double quotes from a SQL identifier
+ */
+function stripQuotes(identifier: string): string {
+  return identifier.replace(/["']/g, "");
+}
+
+/**
+ * Extract the partial word at cursor position.
+ * Handles both unquoted and double-quoted SQL identifiers.
  */
 function extractPrefix(statement: string, cursor: number): PrefixInfo {
   const beforeCursor = statement.slice(0, cursor);
 
-  // Match qualified identifiers: db.schema.table or db.table or table
-  // This captures the full chain of dot-separated identifiers
-  const qualifiedMatch = beforeCursor.match(/((?:\w+\.)+)(\w*)$/);
+  // Match qualified identifiers with optional single or double quotes:
+  // "db"."schema".table, 'schema'.'table', db."table", db.schema.table, etc.
+  // Each qualifier part can be "double-quoted", 'single-quoted', or unquoted
+  const qualifiedMatch = beforeCursor.match(
+    /((?:(?:"[^"]*"|'[^']*'|\w+)\.)+)(\w*)$/
+  );
   if (qualifiedMatch) {
-    // qualifiedMatch[1] = "db." or "db.schema." (includes trailing dot)
-    // qualifiedMatch[2] = partial table name or ""
-    const qualifiers = qualifiedMatch[1]; // e.g., "cms." or "cms.main."
+    const rawQualifiers = qualifiedMatch[1]; // e.g., '"db".' or "'cms'." or 'db.schema.'
     const partial = qualifiedMatch[2] || "";
+    const rawLength = qualifiedMatch[0].length;
+    // Strip quotes for lookup purposes
+    const cleanQualifiers = stripQuotes(rawQualifiers);
     return {
       prefix: partial,
       isAfterDot: true,
-      dotPrefix: qualifiers.slice(0, -1), // Remove trailing dot: "cms" or "cms.main"
-      fullQualifiedPrefix: qualifiers + partial,
+      dotPrefix: cleanQualifiers.slice(0, -1), // Remove trailing dot
+      fullQualifiedPrefix: cleanQualifiers + partial,
+      rawQualifiedPrefixLength: rawLength,
     };
   }
 
-  // Check for single level: word followed by dot
-  const dotMatch = beforeCursor.match(/(\w+)\.\s*(\w*)$/);
+  // Check for single level: word (or quoted identifier) followed by dot
+  const dotMatch = beforeCursor.match(
+    /(?:"([^"]*)"|'([^']*)'|(\w+))\.\s*(\w*)$/
+  );
   if (dotMatch) {
+    const identifier = dotMatch[1] || dotMatch[2] || dotMatch[3]; // quoted content or unquoted word
+    const partial = dotMatch[4] || "";
+    const rawLength = dotMatch[0].length;
     return {
-      prefix: dotMatch[2] || "",
+      prefix: partial,
       isAfterDot: true,
-      dotPrefix: dotMatch[1],
-      fullQualifiedPrefix: dotMatch[1] + "." + (dotMatch[2] || ""),
+      dotPrefix: identifier,
+      fullQualifiedPrefix: identifier + "." + partial,
+      rawQualifiedPrefixLength: rawLength,
     };
   }
 
   // Extract word prefix (alphanumeric + underscore)
   const wordMatch = beforeCursor.match(/(\w+)$/);
+  const prefix = wordMatch ? wordMatch[1] : "";
   return {
-    prefix: wordMatch ? wordMatch[1] : "",
+    prefix,
     isAfterDot: false,
-    fullQualifiedPrefix: wordMatch ? wordMatch[1] : "",
+    fullQualifiedPrefix: prefix,
+    rawQualifiedPrefixLength: prefix.length,
   };
 }
 
@@ -739,7 +774,7 @@ function findMainSelectAfterWith(statement: string): number {
 function extractTables(
   statement: string,
   cursor: number,
-  ctes: CTEReference[],
+  ctes: CTEReference[]
 ): TableReference[] {
   const tables: TableReference[] = [];
   const cteNames = new Set(ctes.map((c) => c.name.toLowerCase()));
@@ -755,23 +790,45 @@ function extractTables(
   // Pattern for FROM/JOIN sources
   // Handles: table_name, 'file.csv', "quoted table", read_csv(...), schema.table
   // Note: Need to handle quoted strings and function calls specially
-  const patterns = [
+
+  // First: match any two-part qualified name (any combo of quoted/unquoted parts)
+  // FROM schema.table, FROM 'schema'.'table', FROM schema.'table', FROM 'schema'.table, etc.
+  const qualifiedPattern =
+    /(?:FROM|JOIN)\s+(?:(['"])([^'"]+)\1|([a-zA-Z_]\w*))\s*\.\s*(?:(['"])([^'"]+)\4|([a-zA-Z_]\w*))\s*(?:AS\s+)?(\w+)?/gi;
+
+  const singlePatterns = [
     // FROM/JOIN with quoted string: FROM 'file.csv' or FROM "My Table"
     /(?:FROM|JOIN)\s+(['"])([^'"]+)\1\s*(?:AS\s+)?(\w+)?/gi,
     // FROM/JOIN with function call: FROM read_csv('...')
     /(?:FROM|JOIN)\s+(\w+\s*\([^)]*\))\s*(?:AS\s+)?(\w+)?/gi,
-    // FROM/JOIN with regular table name: FROM users, FROM schema.table
+    // FROM/JOIN with regular table name: FROM users
     /(?:FROM|JOIN)\s+([a-zA-Z_][\w.]*)\s*(?:AS\s+)?(\w+)?/gi,
     // UPDATE table_name
     /UPDATE\s+([a-zA-Z_][\w.]*)/gi,
   ];
 
-  // Match quoted strings (files or quoted table names) on masked statement
+  // Match qualified names where at least one part is quoted
+  // (e.g., 'schema'.'table', schema."table", 'schema'.table)
+  // Fully unquoted names like schema.table are handled by the regular table pattern below
   let match;
-  const quotedPattern = patterns[0];
+  while ((match = qualifiedPattern.exec(maskedStatement)) !== null) {
+    // Only use this pattern when at least one part is quoted
+    // match[1] = first part quote char, match[4] = second part quote char
+    if (!match[1] && !match[4]) continue;
+    const schemaName = match[2] || match[3];
+    const tableName = match[5] || match[6];
+    const alias = match[7];
+    const fullName = `${schemaName}.${tableName}`;
+    tables.push({ name: fullName, alias, type: "table" });
+  }
+
+  // Match single quoted strings (files or quoted table names) on masked statement
+  const quotedPattern = singlePatterns[0];
   while ((match = quotedPattern.exec(maskedStatement)) !== null) {
     const name = match[2];
     const alias = match[3];
+    // Skip if we already matched this as part of a qualified quoted name
+    if (tables.some((t) => t.name.includes(name))) continue;
     const type =
       name.includes("/") || name.includes("s3://") || name.match(/\.\w{2,4}$/)
         ? "file"
@@ -780,7 +837,7 @@ function extractTables(
   }
 
   // Match function calls on masked statement (but not if it's a subquery we already captured)
-  const funcPattern = patterns[1];
+  const funcPattern = singlePatterns[1];
   while ((match = funcPattern.exec(maskedStatement)) !== null) {
     const funcCall = match[1];
     const alias = match[2];
@@ -791,7 +848,7 @@ function extractTables(
   }
 
   // Match regular table names on masked statement (skip if already matched as quoted/function/subquery)
-  const tablePattern = patterns[2];
+  const tablePattern = singlePatterns[2];
   while ((match = tablePattern.exec(maskedStatement)) !== null) {
     const name = match[1];
     const alias = match[2];
@@ -799,6 +856,15 @@ function extractTables(
     if (/^read_|^parquet_|^csv_|^json_/i.test(name)) continue;
     // Skip if we already have this table or it's a subquery alias
     if (tables.some((t) => t.name === name || t.alias === name)) continue;
+    // Skip if this name (possibly with trailing dot) is a prefix of an already-matched
+    // qualified name (e.g., 'my_database.' when we already have 'my_database.categories')
+    const cleanName = name.replace(/\.$/, "");
+    if (
+      tables.some(
+        (t) => t.name.startsWith(cleanName + ".") || t.name === cleanName
+      )
+    )
+      continue;
 
     const tableRef: TableReference = { name, type: "table" };
     if (alias) tableRef.alias = alias;
@@ -812,7 +878,7 @@ function extractTables(
   }
 
   // Match UPDATE table on masked statement
-  const updatePattern = patterns[3];
+  const updatePattern = singlePatterns[3];
   while ((match = updatePattern.exec(maskedStatement)) !== null) {
     const name = match[1];
     if (!tables.some((t) => t.name === name)) {
@@ -828,7 +894,7 @@ function extractTables(
  */
 function maskSubqueries(
   statement: string,
-  positions: { start: number; end: number }[],
+  positions: { start: number; end: number }[]
 ): string {
   let result = statement;
   // Process in reverse order to preserve positions

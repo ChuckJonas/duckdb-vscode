@@ -1010,7 +1010,6 @@ export async function activate(context: vscode.ExtensionContext) {
     ".",
     "(",
     ",",
-    "\n",
     "'", // Trigger on opening quote for file paths
     '"', // Trigger on opening quote for file paths
     "/" // Trigger on slash for path navigation

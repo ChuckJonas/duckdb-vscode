@@ -4,6 +4,9 @@ import { Histogram } from './ui/Histogram';
 import { TimeSeriesChart } from './ui/TimeSeriesChart';
 import { Tooltip } from './ui/Tooltip';
 import { Toggle } from './ui/Toggle';
+import { IconButton } from './ui/IconButton';
+import { useToast } from './ui/useToast';
+import { Toast } from './ui/Toast';
 import { formatCount } from './utils/format';
 import { 
   Copy, X, ChevronRight, ChevronDown, Search,
@@ -149,30 +152,24 @@ export function ColumnsPanel({
   // Count hidden columns
   const hiddenCount = hideNullColumns ? emptyColumns.length : 0;
 
-  // Toast state for copy feedback
-  const [copyToast, setCopyToast] = useState<string | null>(null);
-
-  // Show copy toast briefly
-  const showCopyToast = useCallback((message: string) => {
-    setCopyToast(message);
-    setTimeout(() => setCopyToast(null), 1500);
-  }, []);
+  // Toast for copy feedback
+  const copyToast = useToast(1500);
 
   // Copy all column names to clipboard (newline-separated for Excel compatibility)
   const handleCopyAllColumns = useCallback(() => {
     const names = filteredAndSortedSummaries.map(s => s.name).join('\n');
     navigator.clipboard.writeText(names).then(() => {
-      showCopyToast(`Copied ${filteredAndSortedSummaries.length} columns`);
+      copyToast.show(`Copied ${filteredAndSortedSummaries.length} columns`);
     });
-  }, [filteredAndSortedSummaries, showCopyToast]);
+  }, [filteredAndSortedSummaries, copyToast]);
 
   // Copy single column name to clipboard
   const handleCopyColumnName = useCallback((name: string, e: React.MouseEvent) => {
     e.stopPropagation(); // Don't trigger row expand
     navigator.clipboard.writeText(name).then(() => {
-      showCopyToast(`Copied "${name}"`);
+      copyToast.show(`Copied "${name}"`);
     });
-  }, [showCopyToast]);
+  }, [copyToast]);
 
   // Handle resize drag
   const handleMouseMove = useCallback((e: MouseEvent) => {
@@ -248,14 +245,14 @@ export function ColumnsPanel({
   return (
     <div className="columns-panel" style={{ width }}>
       {/* Copy toast */}
-      {copyToast && <div className="columns-copy-toast">{copyToast}</div>}
+      <Toast message={copyToast.message} className="columns-copy-toast" />
       
       {/* Resize handle */}
       <div 
         className="columns-panel-resize-handle"
         onMouseDown={startResize}
       />
-      <div className="columns-panel-header">
+      <div className="panel-header columns-panel-header">
         <span className="columns-panel-title">
           {filteredAndSortedSummaries.length !== columnSummaries.length
             ? `${filteredAndSortedSummaries.length}/${columnSummaries.length} Columns`
@@ -277,9 +274,7 @@ export function ColumnsPanel({
               label="Empty"
             />
           )}
-          <button className="columns-panel-close" onClick={onClose} title="Close">
-            <X size={16} />
-          </button>
+          <IconButton icon={<X size={16} />} tooltip="Close" onClick={onClose} />
         </div>
       </div>
       
@@ -288,7 +283,7 @@ export function ColumnsPanel({
         <Search size={14} className="columns-search-icon" />
         <input
           type="text"
-          className="columns-search-input"
+          className="input-base columns-search-input"
           placeholder="Filter columns..."
           value={filterText}
           onChange={(e) => setFilterText(e.target.value)}
