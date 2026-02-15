@@ -14,7 +14,7 @@ export function setGetCurrentDatabase(fn: () => string): void {
 /**
  * Represents a parsed SQL statement with position information
  */
-interface ParsedStatement {
+export interface ParsedStatement {
   sql: string;
   startLine: number;
   endLine: number;
@@ -99,7 +99,7 @@ export class SqlCodeLensProvider implements vscode.CodeLensProvider {
  * - Single-line comments (--)
  * - Block comments
  */
-function parseSqlStatements(sql: string): ParsedStatement[] {
+export function parseSqlStatements(sql: string): ParsedStatement[] {
   const statements: ParsedStatement[] = [];
 
   let currentStart = 0;

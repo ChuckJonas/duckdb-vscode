@@ -56,6 +56,10 @@
         "icon": "$(play)"
       },
       {
+        "command": "duckdb.runStatementAtCursor",
+        "title": "DuckDB: Run Statement at Cursor"
+      },
+      {
         "command": "duckdb.runStatement",
         "title": "DuckDB: Run Statement",
         "icon": "$(play)"
@@ -406,6 +410,10 @@
           "when": "editorLangId == sql"
         },
         {
+          "command": "duckdb.runStatementAtCursor",
+          "when": "editorLangId == sql"
+        },
+        {
           "command": "duckdb.explorer.refresh",
           "when": "false"
         },
@@ -544,6 +552,12 @@
         "command": "duckdb.executeQuery",
         "key": "ctrl+enter",
         "mac": "cmd+enter",
+        "when": "editorTextFocus && editorLangId == sql"
+      },
+      {
+        "command": "duckdb.runStatementAtCursor",
+        "key": "ctrl+shift+enter",
+        "mac": "cmd+shift+enter",
         "when": "editorTextFocus && editorLangId == sql"
       }
     ],

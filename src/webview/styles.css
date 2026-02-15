@@ -1,30 +1,37 @@
 /* 
  * DuckDB Results Table
- * Terminal/Hacker aesthetic — clean, monospace, dark
+ * Adapts to the active VS Code theme via --vscode-* CSS variables.
+ * Catppuccin Mocha values are kept as fallbacks.
  */
 
 :root {
-  /* Catppuccin Mocha inspired palette */
-  --bg-primary: #11111b;
-  --bg-secondary: #181825;
-  --bg-surface: #1e1e2e;
-  --bg-hover: #313244;
-  
-  --text-primary: #cdd6f4;
-  --text-secondary: #a6adc8;
-  --text-muted: #6c7086;
-  
-  --accent-yellow: #f9e2af;
-  --accent-green: #a6e3a1;
-  --accent-blue: #89b4fa;
-  --accent-cyan: #94e2d5;
-  --accent-pink: #f5c2e7;
-  --accent-red: #f38ba8;
-  --accent-peach: #fab387;
-  
-  --border: #313244;
-  --border-subtle: #45475a;
-  
+  /* Background colors — from VS Code theme */
+  --bg-primary: var(--vscode-editor-background, #11111b);
+  --bg-secondary: var(--vscode-sideBar-background, #181825);
+  --bg-surface: var(--vscode-editorWidget-background, #1e1e2e);
+  --bg-hover: var(--vscode-list-hoverBackground, #313244);
+
+  /* Text colors — from VS Code theme */
+  --text-primary: var(--vscode-editor-foreground, #cdd6f4);
+  --text-secondary: var(--vscode-descriptionForeground, #a6adc8);
+  --text-muted: var(--vscode-disabledForeground, #6c7086);
+
+  /* Accent colors — from VS Code terminal / semantic colors */
+  --accent-yellow: var(--vscode-terminal-ansiYellow, #f9e2af);
+  --accent-green: var(--vscode-terminal-ansiGreen, #a6e3a1);
+  --accent-blue: var(--vscode-textLink-foreground, #89b4fa);
+  --accent-cyan: var(--vscode-terminal-ansiCyan, #94e2d5);
+  --accent-pink: var(--vscode-terminal-ansiMagenta, #f5c2e7);
+  --accent-red: var(--vscode-errorForeground, #f38ba8);
+  --accent-peach: var(--vscode-debugTokenExpression-number, #fab387);
+
+  /* Border colors — from VS Code theme */
+  --border: var(--vscode-panel-border, #313244);
+  --border-subtle: var(--vscode-widget-border, #45475a);
+
+  /* Selection — from VS Code theme */
+  --selection-bg: var(--vscode-editor-selectionBackground, rgba(137, 180, 250, 0.2));
+
   /* Spacing */
   --space-xs: 4px;
   --space-sm: 8px;
@@ -33,9 +40,9 @@
   --space-xl: 24px;
   
   /* Typography */
-  --font-mono: 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', 'Consolas', monospace;
+  --font-mono: var(--vscode-editor-font-family, 'JetBrains Mono', 'Fira Code', 'SF Mono', 'Cascadia Code', 'Consolas', monospace);
   --font-size-sm: 11px;
-  --font-size-base: 12px;
+  --font-size-base: var(--vscode-editor-font-size, 12px);
   --font-size-lg: 13px;
 }
 
@@ -450,7 +457,7 @@ body {
 
 .statement-truncation {
   padding: var(--space-xs) var(--space-lg);
-  background: rgba(250, 179, 135, 0.1);
+  background: color-mix(in srgb, var(--accent-peach) 10%, transparent);
   color: var(--accent-peach);
   font-size: var(--font-size-sm);
   border-bottom: 1px solid var(--border);
@@ -671,7 +678,7 @@ body {
 /* Warning Banner */
 .warning {
   padding: var(--space-sm) var(--space-lg);
-  background: rgba(249, 226, 175, 0.1);
+  background: color-mix(in srgb, var(--accent-yellow) 10%, transparent);
   border-bottom: 1px solid var(--border);
   color: var(--accent-yellow);
   font-size: var(--font-size-sm);
@@ -834,7 +841,7 @@ th.resizing {
 
 /* Column Selected */
 th.col-selected {
-  background: #3b4261 !important;
+  background: var(--bg-hover) !important;
 }
 
 th.col-selected .col-name {
@@ -942,16 +949,16 @@ tr:hover td:not(.row-number) {
 
 /* Selection States */
 td.selected {
-  background: rgba(137, 180, 250, 0.2) !important;
+  background: var(--selection-bg) !important;
 }
 
 /* Selection border - only on edges of selection */
 tr.row-selected td {
-  background: rgba(137, 180, 250, 0.15) !important;
+  background: var(--selection-bg) !important;
 }
 
 tr.row-selected td.row-number {
-  background: rgba(137, 180, 250, 0.25) !important;
+  background: var(--selection-bg) !important;
   color: var(--accent-blue);
 }
 
@@ -1207,19 +1214,19 @@ tr.row-selected td.row-number {
 }
 
 .json-key {
-  color: #89b4fa; /* Blue - keys */
+  color: var(--accent-blue);
 }
 
 .json-string {
-  color: #a6e3a1; /* Green - string values */
+  color: var(--accent-green);
 }
 
 .json-number {
-  color: #fab387; /* Peach - numbers */
+  color: var(--accent-peach);
 }
 
 .json-bool {
-  color: #f38ba8; /* Pink - booleans and null */
+  color: var(--accent-pink);
 }
 
 .modal-footer {
@@ -1445,7 +1452,7 @@ tr.row-selected td.row-number {
 
 .top-value-bar {
   height: 100%;
-  background: rgba(137, 180, 250, 0.2);
+  background: var(--selection-bg);
 }
 
 .top-value-label {
@@ -1968,7 +1975,7 @@ button.stat-clickable.active .stat-value {
 }
 
 .stats-table-row.highlighted {
-  background: rgba(137, 180, 250, 0.1);
+  background: var(--selection-bg);
 }
 
 .stats-table-row:not(:last-child) {
@@ -2088,14 +2095,13 @@ button.stat-clickable.active .stat-value {
   position: absolute;
   bottom: 100%;
   transform: translateX(-50%);
-  background: var(--vscode-editor-background, #1e1e1e);
+  background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 4px 8px;
   margin-bottom: 4px;
   pointer-events: none;
   z-index: 100;
-  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
   text-align: center;
   white-space: nowrap;
@@ -2290,7 +2296,7 @@ button.stat-clickable.active .stat-value {
   position: absolute;
   bottom: calc(100% + 4px);
   transform: translateX(-50%);
-  background: rgba(30, 30, 46, 0.98);
+  background: var(--bg-surface);
   border: 1px solid var(--border);
   border-radius: 4px;
   padding: 4px 8px;
@@ -2433,7 +2439,7 @@ button.stat-clickable.active .stat-value {
 
 .mini-top-value-bar {
   height: 100%;
-  background: rgba(137, 180, 250, 0.15);
+  background: var(--selection-bg);
 }
 
 .mini-top-value-label {
@@ -2475,7 +2481,7 @@ button.stat-clickable.active .stat-value {
 }
 
 .mini-top-value-bar.other {
-  background: rgba(166, 173, 186, 0.15);
+  background: color-mix(in srgb, var(--text-secondary) 15%, transparent);
 }
 
 .mini-top-value-label.other {
@@ -2567,7 +2573,6 @@ button.stat-clickable.active .stat-value {
   pointer-events: none;
   box-shadow: 0 2px 8px rgba(0, 0, 0, 0.4);
   opacity: 1;
-  background: rgba(30, 30, 46, 0.98);
 }
 
 .tooltip-top {
@@ -3095,7 +3100,7 @@ button.stat-clickable.active .stat-value {
 }
 
 .data-table th.has-filter {
-  background: rgba(148, 226, 213, 0.1);
+  background: color-mix(in srgb, var(--accent-cyan) 10%, transparent);
 }
 
 .data-table th.has-filter .column-name {

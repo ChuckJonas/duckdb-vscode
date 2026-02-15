@@ -31,6 +31,7 @@ import { getHistoryService } from "./services/historyService";
 import {
   registerSqlCodeLens,
   setGetCurrentDatabase,
+  parseSqlStatements,
 } from "./providers/SqlCodeLensProvider";
 import {
   switchDatabase,
@@ -503,6 +504,56 @@ export async function activate(context: vscode.ExtensionContext) {
           vscode.window.showErrorMessage(`${error}`);
         }
       }
+    }
+  );
+
+  // Register Run Statement at Cursor command (keybinding: Cmd+Shift+Enter)
+  const runStatementAtCursorCmd = vscode.commands.registerCommand(
+    "duckdb.runStatementAtCursor",
+    async () => {
+      const editor = vscode.window.activeTextEditor;
+      if (!editor || editor.document.languageId !== "sql") {
+        vscode.window.showWarningMessage(
+          "No active SQL editor. Open a .sql file first."
+        );
+        return;
+      }
+
+      const document = editor.document;
+      const text = document.getText();
+      const statements = parseSqlStatements(text);
+
+      if (statements.length === 0) {
+        vscode.window.showWarningMessage("No SQL statements found in file");
+        return;
+      }
+
+      // Find the statement that contains the cursor
+      const cursorOffset = document.offsetAt(editor.selection.active);
+      let target = statements[0]; // fallback to first
+
+      for (const stmt of statements) {
+        // Use a generous range: from statement start to its end (including trailing whitespace up to next statement)
+        if (
+          cursorOffset >= stmt.startOffset &&
+          cursorOffset <= stmt.endOffset
+        ) {
+          target = stmt;
+          break;
+        }
+        // If cursor is between statements (in whitespace after semicolon), pick the previous one
+        if (stmt.endOffset < cursorOffset) {
+          target = stmt;
+        }
+      }
+
+      // Delegate to the existing runStatement command
+      await vscode.commands.executeCommand(
+        "duckdb.runStatement",
+        document.uri,
+        target.startOffset,
+        target.endOffset
+      );
     }
   );
 
@@ -2063,6 +2114,7 @@ export async function activate(context: vscode.ExtensionContext) {
   context.subscriptions.push(
     executeCmd,
     runStatementCmd,
+    runStatementAtCursorCmd,
     selectDbCmd,
     manageExtCmd,
     queryFileCmd,
