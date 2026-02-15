@@ -66,13 +66,15 @@ const CACHE_TTL_MS = 30000; // 30 seconds
  * @param fullText The complete SQL text
  * @param cursorPosition The cursor position (character offset from start)
  * @param listFiles Optional function to list files in a directory (for file path completions)
+ * @param skipRemoteDescribe If true, skip DESCRIBE for tables with HTTP/S3 URLs (to avoid network hits)
  * @returns Array of suggestions with their start positions
  */
 export async function getAutocompleteSuggestions(
   queryFn: (sql: string) => Promise<Record<string, unknown>[]>,
   fullText: string,
   cursorPosition: number,
-  listFiles?: ListFilesFn
+  listFiles?: ListFilesFn,
+  skipRemoteDescribe?: boolean
 ): Promise<AutocompleteSuggestion[]> {
   // Skip if empty or just whitespace
   if (!fullText.trim()) {
@@ -92,7 +94,8 @@ export async function getAutocompleteSuggestions(
       const columnSuggestions = await getColumnCompletions(
         queryFn,
         context,
-        cursorPosition
+        cursorPosition,
+        skipRemoteDescribe
       );
       suggestions.push(...columnSuggestions);
     }
@@ -160,7 +163,8 @@ function needsTableCompletions(clause: SQLContext["clause"]): boolean {
 async function getColumnCompletions(
   queryFn: (sql: string) => Promise<Record<string, unknown>[]>,
   context: SQLContext,
-  cursorPosition: number
+  cursorPosition: number,
+  skipRemoteDescribe?: boolean
 ): Promise<AutocompleteSuggestion[]> {
   const suggestions: AutocompleteSuggestion[] = [];
 
@@ -168,7 +172,11 @@ async function getColumnCompletions(
   if (context.isAfterDot && context.dotPrefix) {
     const table = findTableByAliasOrName(context.tables, context.dotPrefix);
     if (table) {
-      const columns = await getColumnsForTable(queryFn, table);
+      const columns = await getColumnsForTable(
+        queryFn,
+        table,
+        skipRemoteDescribe
+      );
       for (const col of columns) {
         suggestions.push({
           suggestion: col.name,
@@ -183,7 +191,11 @@ async function getColumnCompletions(
 
   // Otherwise, show columns from all tables in scope
   for (const table of context.tables) {
-    const columns = await getColumnsForTable(queryFn, table);
+    const columns = await getColumnsForTable(
+      queryFn,
+      table,
+      skipRemoteDescribe
+    );
     const prefix = table.alias || table.name;
 
     for (const col of columns) {
@@ -237,11 +249,19 @@ function findTableByAliasOrName(
 }
 
 /**
+ * Regex to detect HTTP/S3/cloud URLs in SQL text.
+ * Used to skip DESCRIBE for remote sources when cache_httpfs is not loaded.
+ */
+const REMOTE_SOURCE_RE =
+  /https?:\/\/|s3:\/\/|s3a:\/\/|s3n:\/\/|gcs:\/\/|gs:\/\/|az:\/\/|abfss:\/\//i;
+
+/**
  * Get columns for a table using DESCRIBE
  */
 async function getColumnsForTable(
   queryFn: (sql: string) => Promise<Record<string, unknown>[]>,
-  table: TableReference
+  table: TableReference,
+  skipRemoteDescribe?: boolean
 ): Promise<ColumnInfo[]> {
   // For subqueries, use the subquery text as cache key
   const cacheKey =
@@ -253,6 +273,11 @@ async function getColumnsForTable(
   const cached = columnCache.get(cacheKey);
   if (cached && Date.now() - cached.timestamp < CACHE_TTL_MS) {
     return cached.columns;
+  }
+
+  // Skip DESCRIBE for remote sources if cache_httpfs is not loaded
+  if (skipRemoteDescribe && REMOTE_SOURCE_RE.test(table.name)) {
+    return [];
   }
 
   try {

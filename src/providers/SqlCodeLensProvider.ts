@@ -3,12 +3,24 @@
  * Injects "Run All" and "Run Statement" actions directly into SQL files
  */
 import * as vscode from "vscode";
+import { CachedResult } from "../services/resultCacheService";
 
 // Callback to get current database - set by extension.ts
 let getCurrentDatabase: () => string = () => "memory";
 
 export function setGetCurrentDatabase(fn: () => string): void {
   getCurrentDatabase = fn;
+}
+
+// Callback to get cached results for a document - set by extension.ts
+let getCachedResultsForDoc: (
+  docUri: string
+) => Map<number, CachedResult> = () => new Map();
+
+export function setGetCachedResultsForDoc(
+  fn: (docUri: string) => Map<number, CachedResult>
+): void {
+  getCachedResultsForDoc = fn;
 }
 
 /**
@@ -67,21 +79,65 @@ export class SqlCodeLensProvider implements vscode.CodeLensProvider {
       );
     }
 
-    // Add "Run Statement" above each statement (if more than one)
-    if (statements.length > 1) {
-      for (let i = 0; i < statements.length; i++) {
-        const stmt = statements[i];
-        const range = new vscode.Range(stmt.startLine, 0, stmt.startLine, 0);
+    // Add per-statement actions
+    const cachedResults = getCachedResultsForDoc(document.uri.toString());
 
-        // Preview of the statement (first line, truncated)
+    for (let i = 0; i < statements.length; i++) {
+      const stmt = statements[i];
+      // For multi-statement files, place actions above each statement
+      // For single-statement files, place at the top alongside Run All
+      const range =
+        statements.length > 1
+          ? new vscode.Range(stmt.startLine, 0, stmt.startLine, 0)
+          : new vscode.Range(0, 0, 0, 0);
+
+      // "Run Statement" only shown when there are multiple statements
+      if (statements.length > 1) {
         const preview = getStatementPreview(stmt.sql);
-
         lenses.push(
           new vscode.CodeLens(range, {
             title: `$(play) Run Statement`,
             command: "duckdb.runStatement",
             arguments: [document.uri, stmt.startOffset, stmt.endOffset],
             tooltip: `Execute: ${preview}`,
+          })
+        );
+      }
+
+      // "Peek" is always available — executes on demand if not cached
+      lenses.push(
+        new vscode.CodeLens(range, {
+          title: `$(eye) Peek`,
+          command: "duckdb.peekResults",
+          arguments: [
+            document.uri,
+            stmt.startOffset,
+            stmt.endOffset,
+            stmt.endLine,
+          ],
+          tooltip: "Run and preview results inline",
+        })
+      );
+
+      // Show result summary if we have cached results
+      const cached = cachedResults.get(stmt.startOffset);
+      if (cached) {
+        const { meta } = cached;
+        const summary = meta.hasResults
+          ? `${meta.totalRows} rows (${meta.executionTime.toFixed(1)}ms)`
+          : `executed (${meta.executionTime.toFixed(1)}ms)`;
+
+        lenses.push(
+          new vscode.CodeLens(range, {
+            title: `$(check) ${summary}`,
+            command: "duckdb.peekResults",
+            arguments: [
+              document.uri,
+              stmt.startOffset,
+              stmt.endOffset,
+              stmt.endLine,
+            ],
+            tooltip: "Click to peek results",
           })
         );
       }

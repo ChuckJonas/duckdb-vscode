@@ -39,6 +39,7 @@ export interface ExplorerNode {
   isAttached?: boolean; // Is this database currently attached?
   isConfigured?: boolean; // Is this database in workspace settings?
   dbPath?: string; // Path to database file
+  engineType?: string; // DuckDB engine type: 'duckdb', 'postgres', 'sqlite', 'motherduck', etc.
   statValue?: string; // Display value for column-stat nodes
 }
 
@@ -228,6 +229,7 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
           isAttached: db.isAttached,
           isConfigured: db.isConfigured,
           dbPath: db.path || undefined,
+          engineType: db.engineType,
         });
       }
     } catch (error) {
@@ -413,6 +415,13 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
    * Get description (shown to the right of label)
    */
   private getDescription(element: ExplorerNode): string | undefined {
+    if (element.type === "database") {
+      // Show engine type for non-duckdb databases (e.g. postgres, sqlite, motherduck)
+      if (element.engineType && element.engineType !== "duckdb") {
+        return element.engineType;
+      }
+      return undefined;
+    }
     if (element.type === "database-detached") {
       return "(detached)";
     }
@@ -467,18 +476,44 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
   }
 
   /**
+   * Get the icon color for a database based on its engine type
+   */
+  private getDatabaseIconColor(
+    element: ExplorerNode
+  ): vscode.ThemeColor | undefined {
+    if (element.isCurrent) {
+      return new vscode.ThemeColor("charts.green");
+    }
+    // Use distinct colors for non-duckdb engines so they stand out
+    if (element.engineType && element.engineType !== "duckdb") {
+      switch (element.engineType) {
+        case "postgres":
+          return new vscode.ThemeColor("charts.blue");
+        case "sqlite":
+          return new vscode.ThemeColor("charts.orange");
+        case "motherduck":
+          return new vscode.ThemeColor("charts.yellow");
+        case "mysql":
+          return new vscode.ThemeColor("charts.orange");
+        default:
+          // Any other external engine type
+          return new vscode.ThemeColor("charts.purple");
+      }
+    }
+    return undefined;
+  }
+
+  /**
    * Get icon for a node
    */
   private getIcon(element: ExplorerNode): vscode.ThemeIcon {
     switch (element.type) {
-      case "database":
-        // Green for current, regular for attached
-        return element.isCurrent
-          ? new vscode.ThemeIcon(
-              "database",
-              new vscode.ThemeColor("charts.green")
-            )
+      case "database": {
+        const color = this.getDatabaseIconColor(element);
+        return color
+          ? new vscode.ThemeIcon("database", color)
           : new vscode.ThemeIcon("database");
+      }
       case "database-detached":
         // Gray/dimmed icon for detached
         return new vscode.ThemeIcon(
@@ -513,6 +548,9 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
         }
         if (element.isCurrent) parts.push("(current)");
         if (element.isReadOnly) parts.push("(read-only)");
+        if (element.engineType && element.engineType !== "duckdb") {
+          parts.push(`\nEngine: ${element.engineType}`);
+        }
         if (element.dbPath) parts.push(`\nPath: ${element.dbPath}`);
         return parts.join(" ");
       }

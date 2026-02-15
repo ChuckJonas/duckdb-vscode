@@ -495,6 +495,7 @@ export interface CombinedDatabaseInfo {
   isReadOnly: boolean;
   isConfigured: boolean; // In workspace settings
   config?: DatabaseConfig; // Original config if from settings
+  engineType?: string; // DuckDB engine type: 'duckdb', 'postgres', 'sqlite', 'motherduck', etc.
 }
 
 /**
@@ -527,6 +528,7 @@ export async function getCombinedDatabases(
       isReadOnly: db.isReadOnly,
       isConfigured: !!config,
       config,
+      engineType: db.type, // DuckDB-native engine type (e.g. 'duckdb', 'postgres', 'sqlite')
     });
   }
 
@@ -552,28 +554,64 @@ export async function setDefaultDatabase(database: string): Promise<void> {
   await updateWorkspaceConfig("defaultDatabase", database);
 }
 
-export async function addExtensionToSettings(extension: string): Promise<void> {
+export async function addExtensionToAutoLoad(extension: string): Promise<void> {
   const config = getWorkspaceConfig();
-  const extensions = config.get<string[]>("extensions", []);
+  const extensions = config.get<string[]>("extensions.autoLoad", []);
   if (!extensions.includes(extension)) {
     extensions.push(extension);
     await config.update(
-      "extensions",
+      "extensions.autoLoad",
       extensions,
       vscode.ConfigurationTarget.Workspace
     );
   }
 }
 
-export async function removeExtensionFromSettings(
+export async function removeExtensionFromAutoLoad(
   extension: string
 ): Promise<void> {
   const config = getWorkspaceConfig();
-  const extensions = config.get<string[]>("extensions", []);
+  const extensions = config.get<string[]>("extensions.autoLoad", []);
   const filtered = extensions.filter((e) => e !== extension);
   await config.update(
-    "extensions",
+    "extensions.autoLoad",
     filtered,
     vscode.ConfigurationTarget.Workspace
   );
+}
+
+export function getAutoLoadExtensions(): string[] {
+  const config = getWorkspaceConfig();
+  return config.get<string[]>("extensions.autoLoad", []);
+}
+
+/**
+ * Migrate legacy `duckdb.extensions` (array) setting to `duckdb.extensions.autoLoad`.
+ * This handles users who configured the old setting name.
+ */
+export async function migrateExtensionsSetting(): Promise<void> {
+  const config = getWorkspaceConfig();
+  // Check workspace-level for old setting
+  const inspection = config.inspect<string[]>("extensions");
+  const oldValue =
+    inspection?.workspaceValue ?? inspection?.workspaceFolderValue;
+  if (oldValue && Array.isArray(oldValue) && oldValue.length > 0) {
+    const current = config.get<string[]>("extensions.autoLoad", []);
+    // Merge old values into new setting (dedup)
+    const merged = [...new Set([...current, ...oldValue])];
+    await config.update(
+      "extensions.autoLoad",
+      merged,
+      vscode.ConfigurationTarget.Workspace
+    );
+    // Clear the old setting
+    await config.update(
+      "extensions",
+      undefined,
+      vscode.ConfigurationTarget.Workspace
+    );
+    console.log(
+      `🦆 Migrated ${oldValue.length} extension(s) from duckdb.extensions to duckdb.extensions.autoLoad`
+    );
+  }
 }

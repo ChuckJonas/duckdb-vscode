@@ -31,17 +31,29 @@ import { getHistoryService } from "./services/historyService";
 import {
   registerSqlCodeLens,
   setGetCurrentDatabase,
+  setGetCachedResultsForDoc,
   parseSqlStatements,
 } from "./providers/SqlCodeLensProvider";
+import {
+  ResultDocumentProvider,
+  RESULTS_SCHEME,
+} from "./providers/ResultDocumentProvider";
+import {
+  cacheResult,
+  getCachedResult,
+  getCachedResultsForDoc,
+} from "./services/resultCacheService";
 import {
   switchDatabase,
   detachDatabase,
   attachDatabase,
   setDefaultDatabase,
   removeDatabaseFromSettings,
-  removeExtensionFromSettings,
+  removeExtensionFromAutoLoad,
   addDatabaseToSettings,
-  addExtensionToSettings,
+  addExtensionToAutoLoad,
+  getAutoLoadExtensions,
+  migrateExtensionsSetting,
   getCurrentDatabase,
   DatabaseConfig as ManagerDatabaseConfig,
   getCombinedDatabases,
@@ -67,6 +79,7 @@ import {
 import { getAutocompleteSuggestions } from "./services/autocompleteService";
 import {
   installAndLoadExtension,
+  isExtensionLoaded,
   getLoadedExtensions as getLoadedExtensionsFromService,
   COMMON_EXTENSIONS,
 } from "./services/extensionsService";
@@ -251,6 +264,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
     // Load autocomplete extension (required for SQL completions)
     await installAndLoadExtension((sql) => db.run(sql), "autocomplete");
+    // Migrate legacy setting name if needed
+    await migrateExtensionsSetting();
     // Auto-load extensions from workspace settings
     await autoLoadExtensions(db);
     // Auto-attach databases from workspace settings
@@ -335,6 +350,15 @@ export async function activate(context: vscode.ExtensionContext) {
         const sourceId = editor.document.uri.toString();
         showResultsPanel(result, context, sourceId, pageSize, getMaxCopyRows());
         showSuccessDecorations(editor, sql, sqlStartOffset, result.statements);
+
+        // Cache results for peek preview
+        cacheStatementsForPeek(
+          editor.document,
+          sql,
+          sqlStartOffset,
+          result.statements
+        );
+        codeLensProvider?.refresh();
 
         // Record in history - use totals from all statements
         const dbName = await getCurrentDatabase(async (s) => ({
@@ -433,6 +457,10 @@ export async function activate(context: vscode.ExtensionContext) {
             result.statements
           );
         }
+
+        // Cache results for peek preview
+        cacheStatementsForPeek(document, sql, startOffset, result.statements);
+        codeLensProvider?.refresh();
 
         // Record in history
         const dbName = await getCurrentDatabase(async (s) => ({
@@ -557,6 +585,290 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  // ── Live Peek state ──────────────────────────────────────────────────
+  let livePeekTimer: ReturnType<typeof setTimeout> | undefined;
+  let livePeekDisposable: vscode.Disposable | undefined;
+  let livePeekDocUri: string | undefined;
+  let livePeekLine: number | undefined;
+  const getLivePeekDebounceMs = () =>
+    vscode.workspace
+      .getConfiguration("duckdb")
+      .get<number>("peekResults.debounceMs", 600);
+
+  // ── HTTP safety guard state ───────────────────────────────────────────
+  let httpWarningShown = false;
+  let httpBypassCheck = false;
+  /** Cache the cache_httpfs loaded state (refreshed once per peek session) */
+  let cacheHttpfsLoaded: boolean | undefined;
+
+  /**
+   * Check if SQL contains remote HTTP/S3/cloud URLs that would trigger
+   * network requests on every execution.
+   */
+  function sqlContainsRemoteSource(sql: string): boolean {
+    return /https?:\/\/|s3:\/\/|s3a:\/\/|s3n:\/\/|gcs:\/\/|gs:\/\/|az:\/\/|abfss:\/\//i.test(
+      sql
+    );
+  }
+
+  /**
+   * Check if cache_httpfs is loaded (with session-level caching).
+   */
+  async function isCacheHttpfsLoaded(): Promise<boolean> {
+    if (cacheHttpfsLoaded !== undefined) return cacheHttpfsLoaded;
+    try {
+      cacheHttpfsLoaded = await isExtensionLoaded(
+        (sql) => db.query(sql),
+        "cache_httpfs"
+      );
+    } catch {
+      cacheHttpfsLoaded = false;
+    }
+    return cacheHttpfsLoaded;
+  }
+
+  /**
+   * Show a one-time notification recommending cache_httpfs for HTTP queries.
+   * Returns true if the user chose to continue anyway.
+   */
+  async function showHttpCacheWarning(): Promise<boolean> {
+    if (httpWarningShown) return httpBypassCheck;
+    httpWarningShown = true;
+
+    const choice = await vscode.window.showWarningMessage(
+      "Live preview paused: queries with HTTP/S3 sources can cause rate limiting without caching. " +
+        "Install the cache_httpfs extension to cache HTTP responses locally.",
+      "Install cache_httpfs",
+      "Continue Anyway"
+    );
+
+    if (choice === "Install cache_httpfs") {
+      try {
+        await installAndLoadExtension((sql) => db.run(sql), "cache_httpfs");
+        await addExtensionToAutoLoad("cache_httpfs");
+        cacheHttpfsLoaded = true;
+        vscode.window.showInformationMessage(
+          "cache_httpfs installed, loaded, and added to auto-load."
+        );
+        return true;
+      } catch (error) {
+        vscode.window.showErrorMessage(
+          `Failed to install cache_httpfs: ${error}`
+        );
+        return false;
+      }
+    } else if (choice === "Continue Anyway") {
+      httpBypassCheck = true;
+      return true;
+    }
+
+    return false;
+  }
+
+  /**
+   * Execute a statement and return the virtual document URI for the peek view.
+   * Uses cached results if available, otherwise executes the query.
+   */
+  async function executeAndPeek(
+    uri: vscode.Uri,
+    startOffset: number,
+    endOffset: number
+  ): Promise<vscode.Uri | undefined> {
+    const docUri = uri.toString();
+
+    // Try cache first
+    let cached = getCachedResult(docUri, startOffset);
+
+    if (!cached) {
+      // Execute the query
+      const document = await vscode.workspace.openTextDocument(uri);
+      const sql = document.getText().slice(startOffset, endOffset).trim();
+      if (!sql) return undefined;
+
+      try {
+        const pageSize = getPageSize();
+        const result = await db.executeQuery(sql, pageSize);
+
+        // Cache the first statement's result
+        if (result.statements.length > 0) {
+          const stmt = result.statements[0];
+          cacheResult(docUri, startOffset, stmt.meta, stmt.page);
+          cached = getCachedResult(docUri, startOffset);
+        }
+      } catch (error) {
+        // Show the error in the peek view
+        resultDocProvider.setError(docUri, startOffset, String(error));
+        return resultDocProvider.getUri(docUri, startOffset);
+      }
+    }
+
+    if (!cached) return undefined;
+
+    return resultDocProvider.setResult(docUri, startOffset, cached);
+  }
+
+  /**
+   * Start live peek mode — watches for document changes and auto-refreshes.
+   */
+  function startLivePeek(uri: vscode.Uri): void {
+    stopLivePeek(); // Clean up any previous session
+    livePeekDocUri = uri.toString();
+
+    livePeekDisposable = vscode.workspace.onDidChangeTextDocument((e) => {
+      if (e.document.uri.toString() !== livePeekDocUri) return;
+      if (e.contentChanges.length === 0) return;
+
+      // Debounce
+      if (livePeekTimer) clearTimeout(livePeekTimer);
+      livePeekTimer = setTimeout(() => {
+        refreshLivePeek(e.document);
+      }, getLivePeekDebounceMs());
+    });
+  }
+
+  /**
+   * Re-execute the statement at cursor and update the peek view.
+   */
+  async function refreshLivePeek(document: vscode.TextDocument): Promise<void> {
+    // Find the SQL editor — the active editor might be the peek view,
+    // so search visible editors for our source document instead.
+    const sqlEditor = vscode.window.visibleTextEditors.find(
+      (e) => e.document.uri.toString() === livePeekDocUri
+    );
+    if (!sqlEditor) {
+      stopLivePeek();
+      return;
+    }
+
+    const text = document.getText();
+    const statements = parseSqlStatements(text);
+    if (statements.length === 0) return;
+
+    // Find the statement at cursor
+    const cursorOffset = document.offsetAt(sqlEditor.selection.active);
+    let target = statements[0];
+    for (const stmt of statements) {
+      if (cursorOffset >= stmt.startOffset && cursorOffset <= stmt.endOffset) {
+        target = stmt;
+        break;
+      }
+      if (stmt.endOffset < cursorOffset) {
+        target = stmt;
+      }
+    }
+
+    const sql = text.slice(target.startOffset, target.endOffset).trim();
+    if (!sql) return;
+
+    // HTTP safety guard: skip live re-execution for remote sources without caching
+    if (!httpBypassCheck && sqlContainsRemoteSource(sql)) {
+      const hasCache = await isCacheHttpfsLoaded();
+      if (!hasCache) {
+        const shouldContinue = await showHttpCacheWarning();
+        if (!shouldContinue) return; // Skip this refresh, keep last result
+      }
+    }
+
+    const docUri = document.uri.toString();
+    const pageSize = getPageSize();
+
+    try {
+      const result = await db.executeQuery(sql, pageSize);
+      if (result.statements.length > 0) {
+        const stmt = result.statements[0];
+        cacheResult(docUri, target.startOffset, stmt.meta, stmt.page);
+        const cached = getCachedResult(docUri, target.startOffset);
+        if (cached) {
+          resultDocProvider.setResult(docUri, target.startOffset, cached);
+        }
+      }
+    } catch (error) {
+      resultDocProvider.setError(docUri, target.startOffset, String(error));
+    }
+
+    codeLensProvider?.refresh();
+  }
+
+  function stopLivePeek(): void {
+    if (livePeekTimer) {
+      clearTimeout(livePeekTimer);
+      livePeekTimer = undefined;
+    }
+    if (livePeekDisposable) {
+      livePeekDisposable.dispose();
+      livePeekDisposable = undefined;
+    }
+    livePeekDocUri = undefined;
+    livePeekLine = undefined;
+    // Reset HTTP guard state for next session
+    httpWarningShown = false;
+    httpBypassCheck = false;
+    cacheHttpfsLoaded = undefined;
+  }
+
+  // Stop live peek when user switches to a completely different file
+  context.subscriptions.push(
+    vscode.window.onDidChangeActiveTextEditor((editor) => {
+      if (!editor) return;
+      const scheme = editor.document.uri.scheme;
+      // Don't stop if focus moved to our peek result view
+      if (scheme === RESULTS_SCHEME) return;
+      // Don't stop if focus is still on the same SQL document
+      if (editor.document.uri.toString() === livePeekDocUri) return;
+      // Different document entirely — stop live peek
+      stopLivePeek();
+    })
+  );
+
+  // Register Peek Results command (inline preview via Peek View)
+  const peekResultsCmd = vscode.commands.registerCommand(
+    "duckdb.peekResults",
+    async (
+      uri: vscode.Uri,
+      startOffset: number,
+      endOffset: number,
+      line: number
+    ) => {
+      // Execute if needed, then get the virtual URI
+      const virtualUri = await executeAndPeek(uri, startOffset, endOffset);
+      if (!virtualUri) {
+        vscode.window.showWarningMessage("No SQL to execute.");
+        return;
+      }
+
+      codeLensProvider?.refresh();
+
+      // Open the peek widget at the end of the statement
+      await vscode.commands.executeCommand(
+        "editor.action.peekLocations",
+        uri,
+        new vscode.Position(line, 0),
+        [new vscode.Location(virtualUri, new vscode.Position(0, 0))],
+        "peek"
+      );
+
+      // Start live preview mode if the setting is enabled
+      const livePreviewEnabled = vscode.workspace
+        .getConfiguration("duckdb")
+        .get<boolean>("peekResults.livePreview", false);
+
+      if (livePreviewEnabled) {
+        livePeekLine = line;
+        startLivePeek(uri);
+
+        // Warn about HTTP sources after the peek is open (non-blocking)
+        const document = await vscode.workspace.openTextDocument(uri);
+        const sql = document.getText().slice(startOffset, endOffset).trim();
+        if (sql && sqlContainsRemoteSource(sql)) {
+          const hasCache = await isCacheHttpfsLoaded();
+          if (!hasCache) {
+            showHttpCacheWarning();
+          }
+        }
+      }
+    }
+  );
+
   // Register Select Database command (status bar click)
   const selectDbCmd = vscode.commands.registerCommand(
     "duckdb.selectDatabase",
@@ -630,6 +942,11 @@ export async function activate(context: vscode.ExtensionContext) {
           label: "$(folder-opened) Attach Existing...",
           description: "Attach an existing .duckdb file",
           action: "attach",
+        },
+        {
+          label: "$(terminal) Attach with SQL...",
+          description: "Run a custom ATTACH command (e.g. Postgres, SQLite)",
+          action: "manual",
         }
       );
 
@@ -836,6 +1153,69 @@ export async function activate(context: vscode.ExtensionContext) {
           break;
         }
 
+        case "manual": {
+          // Let user enter a custom ATTACH SQL command
+          const sql = await vscode.window.showInputBox({
+            prompt: "Enter the ATTACH SQL command",
+            placeHolder:
+              "ATTACH 'postgres://user:pass@host:5432/db' AS mydb (TYPE postgres)",
+            ignoreFocusOut: true,
+            validateInput: (value) => {
+              if (!value.trim()) return "SQL command is required";
+              return undefined;
+            },
+          });
+
+          if (!sql) break;
+
+          // Extract alias from SQL: ... AS "alias" or AS alias
+          let alias = "";
+          const aliasMatch = sql.match(/\bAS\s+(?:"([^"]+)"|(\w+))/i);
+          if (aliasMatch) {
+            alias = aliasMatch[1] || aliasMatch[2];
+          }
+
+          // Only prompt for alias if we couldn't parse one from the SQL
+          if (!alias) {
+            const enteredAlias = await vscode.window.showInputBox({
+              prompt: "Could not detect alias — enter a name for this database",
+              ignoreFocusOut: true,
+              validateInput: (value) => {
+                if (!value.trim()) return "Alias is required";
+                return undefined;
+              },
+            });
+
+            if (!enteredAlias) break;
+            alias = enteredAlias;
+          }
+
+          try {
+            await runManualSql((s) => db.run(s), sql);
+            currentDatabase = alias;
+            updateStatusBar();
+            databaseExplorer.refresh();
+
+            // Save to workspace settings as manual type
+            await addDatabaseToSettings({
+              alias,
+              type: "manual",
+              sql,
+              attached: true,
+            });
+            await setDefaultDatabase(alias);
+
+            vscode.window.showInformationMessage(
+              `🦆 Attached database: ${alias}`
+            );
+          } catch (error) {
+            vscode.window.showErrorMessage(
+              `Failed to execute ATTACH command: ${error}`
+            );
+          }
+          break;
+        }
+
         case "switch": {
           if (selected.databaseName) {
             try {
@@ -863,6 +1243,7 @@ export async function activate(context: vscode.ExtensionContext) {
     "duckdb.manageExtensions",
     async () => {
       await showExtensionsQuickPick(db);
+      extensionsExplorer.refresh();
     }
   );
 
@@ -1016,11 +1397,15 @@ export async function activate(context: vscode.ExtensionContext) {
           const fullText = document.getText();
           const cursorPosition = document.offsetAt(position);
 
+          // Skip DESCRIBE for remote sources if cache_httpfs is not loaded
+          const skipRemote = !(await isCacheHttpfsLoaded());
+
           const suggestions = await getAutocompleteSuggestions(
             (sql) => db.query(sql),
             fullText,
             cursorPosition,
-            listFilesForAutocomplete
+            listFilesForAutocomplete,
+            skipRemote
           );
 
           return suggestions.map(
@@ -2044,14 +2429,39 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   );
 
-  const extensionsUnloadCmd = vscode.commands.registerCommand(
-    "duckdb.extensions.unload",
+  const extensionsLoadCmd = vscode.commands.registerCommand(
+    "duckdb.extensions.load",
     async (node: ExtensionNode) => {
       if (node.type !== "extension") return;
+      try {
+        await installAndLoadExtension((sql) => db.run(sql), node.name);
+        vscode.window.showInformationMessage(`Loaded extension: ${node.name}`);
+        extensionsExplorer.refresh();
+      } catch (error) {
+        vscode.window.showErrorMessage(
+          `Failed to load extension ${node.name}: ${error}`
+        );
+      }
+    }
+  );
 
-      await removeExtensionFromSettings(node.name);
+  const extensionsAddToAutoLoadCmd = vscode.commands.registerCommand(
+    "duckdb.extensions.addToAutoLoad",
+    async (node: ExtensionNode) => {
+      if (node.type !== "extension") return;
+      await addExtensionToAutoLoad(node.name);
+      vscode.window.showInformationMessage(`Added ${node.name} to auto-load.`);
+      extensionsExplorer.refresh();
+    }
+  );
+
+  const extensionsRemoveFromAutoLoadCmd = vscode.commands.registerCommand(
+    "duckdb.extensions.removeFromAutoLoad",
+    async (node: ExtensionNode) => {
+      if (node.type !== "extension") return;
+      await removeExtensionFromAutoLoad(node.name);
       vscode.window.showInformationMessage(
-        `Removed ${node.name} from auto-load. Restart VS Code to unload.`
+        `Removed ${node.name} from auto-load.`
       );
       extensionsExplorer.refresh();
     }
@@ -2059,7 +2469,17 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Register SQL CodeLens provider for run actions
   setGetCurrentDatabase(() => currentDatabase);
+  setGetCachedResultsForDoc(getCachedResultsForDoc);
   codeLensProvider = registerSqlCodeLens(context);
+
+  // Register virtual document provider for peek results
+  const resultDocProvider = new ResultDocumentProvider();
+  const resultDocRegistration =
+    vscode.workspace.registerTextDocumentContentProvider(
+      RESULTS_SCHEME,
+      resultDocProvider
+    );
+  context.subscriptions.push(resultDocRegistration);
 
   // Register SQL formatting provider (Format Document / Format Selection)
   registerSqlFormatter(context);
@@ -2115,6 +2535,7 @@ export async function activate(context: vscode.ExtensionContext) {
     executeCmd,
     runStatementCmd,
     runStatementAtCursorCmd,
+    peekResultsCmd,
     selectDbCmd,
     manageExtCmd,
     queryFileCmd,
@@ -2154,9 +2575,38 @@ export async function activate(context: vscode.ExtensionContext) {
     extensionsTreeView,
     extensionsRefreshCmd,
     extensionsAddCmd,
-    extensionsUnloadCmd,
+    extensionsLoadCmd,
+    extensionsAddToAutoLoadCmd,
+    extensionsRemoveFromAutoLoadCmd,
     goToSourceCmd
   );
+}
+
+/**
+ * Cache executed statement results for the peek preview feature.
+ * Uses parseSqlStatements to compute offsets that exactly match the CodeLens
+ * provider's offsets (since both use the same parser).
+ */
+function cacheStatementsForPeek(
+  document: vscode.TextDocument,
+  sql: string,
+  baseOffset: number,
+  statements: Array<{
+    meta: import("./services/duckdb").StatementCacheMeta;
+    page: import("./services/duckdb").PageData;
+  }>
+): void {
+  const docUri = document.uri.toString();
+
+  // Use the same parser as CodeLens to guarantee matching offsets
+  const parsed = parseSqlStatements(sql);
+
+  // Pair results with parsed statements by index
+  const count = Math.min(parsed.length, statements.length);
+  for (let i = 0; i < count; i++) {
+    const startOffset = baseOffset + parsed[i].startOffset;
+    cacheResult(docUri, startOffset, statements[i].meta, statements[i].page);
+  }
 }
 
 export async function deactivate() {
@@ -2299,8 +2749,7 @@ interface DatabaseConfig {
 async function autoLoadExtensions(
   db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
-  const config = getWorkspaceConfig();
-  const extensions = config.get<string[]>("extensions", []);
+  const extensions = getAutoLoadExtensions();
 
   if (extensions.length === 0) {
     return;
@@ -2331,8 +2780,7 @@ async function autoLoadExtensions(
 async function showExtensionsQuickPick(
   db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
-  const config = getWorkspaceConfig();
-  const enabledExtensions = config.get<string[]>("extensions", []);
+  const enabledExtensions = getAutoLoadExtensions();
 
   // Get currently loaded extensions
   let loadedExtensions: string[] = [];
@@ -2406,7 +2854,7 @@ async function showExtensionsQuickPick(
   switch (selected.action) {
     case "add": {
       if (selected.extName) {
-        await addExtensionToSettings(selected.extName);
+        await addExtensionToAutoLoad(selected.extName);
         // Try to load immediately
         try {
           await installAndLoadExtension(runFn, selected.extName);
@@ -2422,7 +2870,7 @@ async function showExtensionsQuickPick(
 
     case "remove": {
       if (selected.extName) {
-        await removeExtensionFromSettings(selected.extName);
+        await removeExtensionFromAutoLoad(selected.extName);
         vscode.window.showInformationMessage(
           `🦆 Removed extension: ${selected.extName} (restart to unload)`
         );
@@ -2436,7 +2884,7 @@ async function showExtensionsQuickPick(
         placeHolder: "e.g., httpfs, postgres, spatial",
       });
       if (extName) {
-        await addExtensionToSettings(extName);
+        await addExtensionToAutoLoad(extName);
         try {
           await installAndLoadExtension(runFn, extName);
           vscode.window.showInformationMessage(
@@ -2475,6 +2923,7 @@ interface DatabasePickItem extends vscode.QuickPickItem {
     | "reattach"
     | "detach"
     | "forget"
+    | "manual"
     | "none";
   databaseName?: string;
 }

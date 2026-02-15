@@ -57,10 +57,36 @@ Performance Note: When you execute a query, the extension will create a temporar
 - **Schema browser** — Databases → Schemas → Tables/Views → Columns
 - **Quick actions** — SELECT TOP 100, DESCRIBE, SUMMARIZE, View Definition, Drop Table
 
+### Inline Peek Results
+
+- **Peek results** — CodeLens "Peek" button above each statement opens an inline preview without leaving the editor
+- **Execute on demand** — Peek runs the query automatically if no cached results exist
+- **Live preview mode** — Optionally auto-refreshes results as you type (off by default, enable with `duckdb.peekResults.livePreview`)
+
+> **Important: Remote Data Sources & Live Preview**
+>
+> If your queries reference remote sources (HTTP URLs, S3, GCS, Azure), **live preview can cause excessive network requests** since it re-executes the query on every keystroke (debounced). This also applies to indirect remote access through views, attached remote databases, or table functions that wrap remote sources — cases the extension cannot always detect automatically.
+>
+> **Strongly recommended:** Install the [`cache_httpfs`](https://duckdb.org/community_extensions/extensions/cache_httpfs) community extension to cache HTTP responses locally:
+>
+> ```sql
+> INSTALL cache_httpfs FROM community;
+> LOAD cache_httpfs;
+> ```
+>
+> Or add it to your workspace auto-load setting:
+>
+> ```json
+> { "duckdb.extensions.autoLoad": ["cache_httpfs"] }
+> ```
+>
+> The extension will prompt you to install `cache_httpfs` if it detects remote URLs in your SQL, but it cannot detect all cases (e.g., views over remote tables, attached remote databases). If you work with remote data, enable `cache_httpfs` proactively.
+
 ### Extensions
 
-- **Managed extensions** — View, add, and remove extensions
-- **Auto-load on startup** — Configured extensions load automatically
+- **Managed extensions** — View, install, load, and configure extensions
+- **Auto-load on startup** — Configured extensions install and load automatically
+- **Context-aware actions** — Right-click to load, add/remove from auto-load
 
 ### Query History
 
@@ -120,15 +146,29 @@ Databases to auto-attach on startup.
 
 Database to USE after attaching (default: `"memory"`).
 
-#### `duckdb.extensions`
+#### `duckdb.extensions.autoLoad`
 
-Extensions to auto-load on startup.
+Extensions to automatically install and load on startup.
 
 ```json
 {
-  "duckdb.extensions": ["httpfs", "parquet", "json", "postgres"]
+  "duckdb.extensions.autoLoad": ["httpfs", "parquet", "json", "postgres"]
 }
 ```
+
+### Inline Preview
+
+#### `duckdb.peekResults.livePreview`
+
+Enable live preview mode (default: `false`). When enabled, peeking a statement will auto-refresh results as you type. **See the warning above about remote data sources.**
+
+#### `duckdb.peekResults.maxRows`
+
+Maximum rows in the peek preview (default: `50`, range: 5–500).
+
+#### `duckdb.peekResults.debounceMs`
+
+Debounce delay in ms for live preview (default: `600`, range: 200–5000). Higher values reduce query frequency.
 
 ### Results Display
 
@@ -204,8 +244,9 @@ Maximum history entries to keep (default: `1000`).
 
 | Command                    | Keybinding  | Description                            |
 | -------------------------- | ----------- | -------------------------------------- |
-| DuckDB: Execute Query      | `Cmd+Enter` | Run all SQL in active editor           |
-| DuckDB: Run Statement      | —           | Run a single statement (via CodeLens)  |
+| DuckDB: Execute Query      | `Cmd+Enter`       | Run all SQL in active editor           |
+| DuckDB: Run Statement      | —                  | Run a single statement (via CodeLens)  |
+| DuckDB: Run at Cursor      | `Ctrl+Shift+Enter` | Run the statement under the cursor     |
 | DuckDB: Select Database    | —           | Switch active database                 |
 | DuckDB: Manage Extensions  | —           | Install/remove extensions              |
 | DuckDB: Query File         | —           | Query a data file (right-click)        |

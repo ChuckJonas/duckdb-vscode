@@ -4,6 +4,32 @@ All notable changes to the "duckdb" extension will be documented in this file.
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.0.16] - 2026-02-14
+
+### Added
+- **Peek Results**: new "Peek" CodeLens action on every SQL statement — runs the query and shows results inline in a VS Code peek view as a formatted ASCII table
+- **Live Preview**: while a peek view is open, editing the SQL document automatically re-executes and refreshes the preview (debounced, configurable via `duckdb.peekResults.debounceMs`)
+- **Run Statement at Cursor** command (`Cmd+Shift+Enter` / `Ctrl+Shift+Enter`) — executes the single statement under the cursor without selecting it
+- **Result summary in CodeLens**: after execution, each statement shows its row count and timing inline (e.g. `✓ 42 rows (12.3ms)`) — click to peek
+- **Extension auto-load management**: "Add to Auto-load" and "Remove from Auto-load" context menu actions in the Extensions panel; new `duckdb.extensions.autoLoad` setting replaces the old `duckdb.extensions` array (auto-migrated)
+- **Load Extension** context menu action for installed-but-not-loaded extensions
+- **HTTP safety guard**: live preview detects HTTP/S3/cloud URLs and pauses execution if `cache_httpfs` is not loaded, offering a one-click install
+- `cache_httpfs` added to the common extensions quick-pick list
+
+### Changed
+- **Theme-aware result panel**: all hardcoded colors replaced with VS Code CSS variables (`--vscode-*`), so the results webview adapts to any theme (light, dark, high contrast)
+- Font family and size now inherit from the editor via `--vscode-editor-font-family` and `--vscode-editor-font-size`
+- Extension installation now tries the core repository first, then automatically falls back to the community repository (no manual flag needed)
+- "Add Extension…" renamed to "Install Extension…" in the Extensions panel
+- Extensions explorer now shows auto-load status in the description and richer Markdown tooltips
+- Autocomplete skips `DESCRIBE` for remote HTTP/S3 sources when `cache_httpfs` is not loaded, avoiding unwanted network requests during typing
+
+### Internal
+- New `ResultDocumentProvider` — virtual document provider for the `duckdb-results://` URI scheme used by peek views
+- New `resultCacheService` — in-memory LRU cache (50 entries) storing recent query results keyed by document URI + statement offset
+- `parseSqlStatements` and `getCachedResultsForDoc` exported from their respective modules for reuse
+- `databaseManager` exposes `engineType` on `CombinedDatabaseInfo` for future use
+
 ## [0.0.15] - 2026-02-14
 
 ### Added

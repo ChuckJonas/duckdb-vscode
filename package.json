@@ -2,7 +2,7 @@
   "name": "duckdb",
   "displayName": "DuckDB",
   "description": "A DuckDB client for VS Code",
-  "version": "0.0.15",
+  "version": "0.0.16",
   "publisher": "chuckjonas",
   "icon": "resources/icon.png",
   "repository": {
@@ -58,6 +58,10 @@
       {
         "command": "duckdb.runStatementAtCursor",
         "title": "DuckDB: Run Statement at Cursor"
+      },
+      {
+        "command": "duckdb.peekResults",
+        "title": "DuckDB: Peek Results"
       },
       {
         "command": "duckdb.runStatement",
@@ -207,7 +211,7 @@
       },
       {
         "command": "duckdb.extensions.add",
-        "title": "Add Extension...",
+        "title": "Install Extension...",
         "icon": "$(add)"
       },
       {
@@ -216,7 +220,15 @@
         "icon": "$(refresh)"
       },
       {
-        "command": "duckdb.extensions.unload",
+        "command": "duckdb.extensions.load",
+        "title": "Load Extension"
+      },
+      {
+        "command": "duckdb.extensions.addToAutoLoad",
+        "title": "Add to Auto-load"
+      },
+      {
+        "command": "duckdb.extensions.removeFromAutoLoad",
         "title": "Remove from Auto-load"
       },
       {
@@ -362,9 +374,19 @@
           "group": "3_danger@2"
         },
         {
-          "command": "duckdb.extensions.unload",
-          "when": "view == duckdb.extensions && viewItem == extension",
+          "command": "duckdb.extensions.load",
+          "when": "view == duckdb.extensions && viewItem =~ /^ext-(installed)/",
           "group": "1_ext@1"
+        },
+        {
+          "command": "duckdb.extensions.addToAutoLoad",
+          "when": "view == duckdb.extensions && viewItem =~ /^ext-(loaded|installed)$/",
+          "group": "2_autoload@1"
+        },
+        {
+          "command": "duckdb.extensions.removeFromAutoLoad",
+          "when": "view == duckdb.extensions && viewItem =~ /^ext-(loaded|installed)-autoload$/",
+          "group": "2_autoload@1"
         },
         {
           "command": "duckdb.history.runAgain",
@@ -522,11 +544,23 @@
           "when": "false"
         },
         {
-          "command": "duckdb.extensions.unload",
+          "command": "duckdb.extensions.load",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.extensions.addToAutoLoad",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.extensions.removeFromAutoLoad",
           "when": "false"
         },
         {
           "command": "duckdb.runStatement",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.peekResults",
           "when": "false"
         },
         {
@@ -627,10 +661,10 @@
           "default": "memory",
           "description": "Default database to USE after attaching"
         },
-        "duckdb.extensions": {
+        "duckdb.extensions.autoLoad": {
           "type": "array",
           "default": [],
-          "description": "Extensions to auto-load on startup",
+          "description": "DuckDB extensions to automatically install and load on startup (e.g. [\"httpfs\", \"spatial\"])",
           "items": {
             "type": "string"
           }
@@ -734,8 +768,30 @@
             "Place AND/OR after the newline"
           ],
           "description": "Where to place logical operators (AND, OR) relative to newlines"
+        },
+        "duckdb.peekResults.maxRows": {
+          "type": "number",
+          "default": 50,
+          "minimum": 5,
+          "maximum": 500,
+          "description": "Maximum number of rows to display in the inline Peek Results preview"
+        },
+        "duckdb.peekResults.livePreview": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Enable live preview mode: automatically re-runs the query at the cursor as you type.\n\n**Warning:** If your queries reference remote sources (HTTP, S3, etc.), enable the `cache_httpfs` extension to avoid excessive network requests. See the README for details."
+        },
+        "duckdb.peekResults.debounceMs": {
+          "type": "number",
+          "default": 600,
+          "minimum": 200,
+          "maximum": 5000,
+          "description": "Debounce delay (ms) for live preview mode. Higher values reduce query frequency when typing."
         }
       }
+    },
+    "configurationDefaults": {
+      "editor.peekWidgetDefaultFocus": "editor"
     }
   },
   "scripts": {
