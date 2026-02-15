@@ -585,11 +585,15 @@ export async function activate(context: vscode.ExtensionContext) {
     }
   );
 
+  // ── Peek state ─────────────────────────────────────────────────────
+  /** Tracks which document + line has the active peek */
+  let activePeekDocUri: string | undefined;
+  let activePeekLine: number | undefined;
+
   // ── Live Peek state ──────────────────────────────────────────────────
   let livePeekTimer: ReturnType<typeof setTimeout> | undefined;
   let livePeekDisposable: vscode.Disposable | undefined;
   let livePeekDocUri: string | undefined;
-  let livePeekLine: number | undefined;
   const getLivePeekDebounceMs = () =>
     vscode.workspace
       .getConfiguration("duckdb")
@@ -666,8 +670,9 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   /**
-   * Execute a statement and return the virtual document URI for the peek view.
-   * Uses cached results if available, otherwise executes the query.
+   * Execute a statement and push the result into the active peek slot.
+   * Always uses the same stable virtual URI so the peek view can be
+   * refreshed in-place even when the statement offset changes.
    */
   async function executeAndPeek(
     uri: vscode.Uri,
@@ -675,36 +680,28 @@ export async function activate(context: vscode.ExtensionContext) {
     endOffset: number
   ): Promise<vscode.Uri | undefined> {
     const docUri = uri.toString();
+    const document = await vscode.workspace.openTextDocument(uri);
+    const sql = document.getText().slice(startOffset, endOffset).trim();
+    if (!sql) return undefined;
 
-    // Try cache first
-    let cached = getCachedResult(docUri, startOffset);
+    try {
+      const pageSize = getPageSize();
+      const result = await db.executeQuery(sql, pageSize);
 
-    if (!cached) {
-      // Execute the query
-      const document = await vscode.workspace.openTextDocument(uri);
-      const sql = document.getText().slice(startOffset, endOffset).trim();
-      if (!sql) return undefined;
-
-      try {
-        const pageSize = getPageSize();
-        const result = await db.executeQuery(sql, pageSize);
-
-        // Cache the first statement's result
-        if (result.statements.length > 0) {
-          const stmt = result.statements[0];
-          cacheResult(docUri, startOffset, stmt.meta, stmt.page);
-          cached = getCachedResult(docUri, startOffset);
+      if (result.statements.length > 0) {
+        const stmt = result.statements[0];
+        // Also keep in the per-statement cache (for CodeLens indicators)
+        cacheResult(docUri, startOffset, stmt.meta, stmt.page);
+        const cached = getCachedResult(docUri, startOffset);
+        if (cached) {
+          return resultDocProvider.setActivePeekResult(cached);
         }
-      } catch (error) {
-        // Show the error in the peek view
-        resultDocProvider.setError(docUri, startOffset, String(error));
-        return resultDocProvider.getUri(docUri, startOffset);
       }
+    } catch (error) {
+      return resultDocProvider.setActivePeekError(String(error));
     }
 
-    if (!cached) return undefined;
-
-    return resultDocProvider.setResult(docUri, startOffset, cached);
+    return undefined;
   }
 
   /**
@@ -727,15 +724,12 @@ export async function activate(context: vscode.ExtensionContext) {
   }
 
   /**
-   * Re-execute the statement at cursor and update the peek view.
+   * Re-execute the peeked statement and update the peek view.
+   * Uses activePeekLine (the line where the peek is anchored) to find the
+   * correct statement, so edits in other statements don't hijack the preview.
    */
   async function refreshLivePeek(document: vscode.TextDocument): Promise<void> {
-    // Find the SQL editor — the active editor might be the peek view,
-    // so search visible editors for our source document instead.
-    const sqlEditor = vscode.window.visibleTextEditors.find(
-      (e) => e.document.uri.toString() === livePeekDocUri
-    );
-    if (!sqlEditor) {
+    if (activePeekLine === undefined) {
       stopLivePeek();
       return;
     }
@@ -744,18 +738,28 @@ export async function activate(context: vscode.ExtensionContext) {
     const statements = parseSqlStatements(text);
     if (statements.length === 0) return;
 
-    // Find the statement at cursor
-    const cursorOffset = document.offsetAt(sqlEditor.selection.active);
+    // Find the statement that contains or ends near the peek anchor line.
+    // activePeekLine is the endLine of the peeked statement, so look for
+    // the statement whose range includes that line.
+    const peekOffset = document.offsetAt(
+      new vscode.Position(activePeekLine, 0)
+    );
     let target = statements[0];
     for (const stmt of statements) {
-      if (cursorOffset >= stmt.startOffset && cursorOffset <= stmt.endOffset) {
+      if (peekOffset >= stmt.startOffset && peekOffset <= stmt.endOffset) {
         target = stmt;
         break;
       }
-      if (stmt.endOffset < cursorOffset) {
+      // Also match if the peek line is just past the statement end (the
+      // peek anchors at endLine which may be 1 past the last statement char)
+      if (stmt.endOffset < peekOffset) {
         target = stmt;
       }
     }
+
+    // Update activePeekLine in case the statement shifted due to edits above it
+    const newEndLine = document.positionAt(target.endOffset).line;
+    activePeekLine = newEndLine;
 
     const sql = text.slice(target.startOffset, target.endOffset).trim();
     if (!sql) return;
@@ -779,11 +783,11 @@ export async function activate(context: vscode.ExtensionContext) {
         cacheResult(docUri, target.startOffset, stmt.meta, stmt.page);
         const cached = getCachedResult(docUri, target.startOffset);
         if (cached) {
-          resultDocProvider.setResult(docUri, target.startOffset, cached);
+          resultDocProvider.setActivePeekResult(cached);
         }
       }
     } catch (error) {
-      resultDocProvider.setError(docUri, target.startOffset, String(error));
+      resultDocProvider.setActivePeekError(String(error));
     }
 
     codeLensProvider?.refresh();
@@ -799,14 +803,13 @@ export async function activate(context: vscode.ExtensionContext) {
       livePeekDisposable = undefined;
     }
     livePeekDocUri = undefined;
-    livePeekLine = undefined;
     // Reset HTTP guard state for next session
     httpWarningShown = false;
     httpBypassCheck = false;
     cacheHttpfsLoaded = undefined;
   }
 
-  // Stop live peek when user switches to a completely different file
+  // Stop live peek / clear peek state when user switches to a completely different file
   context.subscriptions.push(
     vscode.window.onDidChangeActiveTextEditor((editor) => {
       if (!editor) return;
@@ -814,9 +817,13 @@ export async function activate(context: vscode.ExtensionContext) {
       // Don't stop if focus moved to our peek result view
       if (scheme === RESULTS_SCHEME) return;
       // Don't stop if focus is still on the same SQL document
-      if (editor.document.uri.toString() === livePeekDocUri) return;
-      // Different document entirely — stop live peek
+      const editorUri = editor.document.uri.toString();
+      if (editorUri === livePeekDocUri || editorUri === activePeekDocUri)
+        return;
+      // Different document entirely — stop live peek and clear peek state
       stopLivePeek();
+      activePeekDocUri = undefined;
+      activePeekLine = undefined;
     })
   );
 
@@ -829,7 +836,20 @@ export async function activate(context: vscode.ExtensionContext) {
       endOffset: number,
       line: number
     ) => {
-      // Execute if needed, then get the virtual URI
+      const docUri = uri.toString();
+
+      // Check if a duckdb peek is already visible at the SAME statement.
+      // If so, we can refresh content in-place without reopening.
+      // If the peek is at a different line, we need to reopen at the new position.
+      const peekEditorVisible = vscode.window.visibleTextEditors.some(
+        (e) => e.document.uri.scheme === RESULTS_SCHEME
+      );
+      const sameStatementPeek =
+        peekEditorVisible &&
+        activePeekDocUri === docUri &&
+        activePeekLine === line;
+
+      // Execute and get the virtual URI
       const virtualUri = await executeAndPeek(uri, startOffset, endOffset);
       if (!virtualUri) {
         vscode.window.showWarningMessage("No SQL to execute.");
@@ -838,22 +858,32 @@ export async function activate(context: vscode.ExtensionContext) {
 
       codeLensProvider?.refresh();
 
-      // Open the peek widget at the end of the statement
-      await vscode.commands.executeCommand(
-        "editor.action.peekLocations",
-        uri,
-        new vscode.Position(line, 0),
-        [new vscode.Location(virtualUri, new vscode.Position(0, 0))],
-        "peek"
-      );
+      if (!sameStatementPeek) {
+        // Open (or move) the peek widget at the end of the statement.
+        // If a peek is open at a different line, VS Code will close the
+        // old one and open at the new position.
+        await vscode.commands.executeCommand(
+          "editor.action.peekLocations",
+          uri,
+          new vscode.Position(line, 0),
+          [new vscode.Location(virtualUri, new vscode.Position(0, 0))],
+          "peek"
+        );
+      }
+      // else: peek is at the same statement — the setActivePeekResult call
+      // inside executeAndPeek already fired onDidChange, so the peek
+      // view content refreshes automatically.
+
+      // Track the active peek
+      activePeekDocUri = docUri;
+      activePeekLine = line;
 
       // Start live preview mode if the setting is enabled
       const livePreviewEnabled = vscode.workspace
         .getConfiguration("duckdb")
         .get<boolean>("peekResults.livePreview", false);
 
-      if (livePreviewEnabled) {
-        livePeekLine = line;
+      if (livePreviewEnabled && !livePeekDocUri) {
         startLivePeek(uri);
 
         // Warn about HTTP sources after the peek is open (non-blocking)

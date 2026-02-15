@@ -1,12 +1,13 @@
 /**
  * Result Document Provider
  *
- * A TextDocumentContentProvider that serves virtual documents for the
- * "duckdb-results" URI scheme. Each document contains a formatted ASCII
- * table of query results, displayed in VS Code's Peek View widget.
+ * A TextDocumentContentProvider that serves a single virtual document for the
+ * "duckdb-results" URI scheme, used by the Peek View widget to display inline
+ * query result previews.
  *
- * Results are stored directly in the provider (keyed by a stable ID)
- * to avoid any URI encoding/decoding issues.
+ * The provider maintains one "active peek" slot. Every peek/live-refresh writes
+ * to this same stable URI, so VS Code's onDidChange mechanism can refresh the
+ * peek view in-place — even when the underlying statement moves or changes.
  */
 
 import * as vscode from "vscode";
@@ -22,93 +23,62 @@ export const RESULTS_SCHEME = "duckdb-results";
 // Provider
 // ============================================================================
 
+/** The single stable key used for the active peek view. */
+const ACTIVE_KEY = "peek";
+
 export class ResultDocumentProvider
   implements vscode.TextDocumentContentProvider
 {
   private _onDidChange = new vscode.EventEmitter<vscode.Uri>();
   readonly onDidChange = this._onDidChange.event;
 
-  /** Content stored by a simple numeric key (result or error text) */
-  private _content = new Map<string, CachedResult | string>();
+  /** The current peek content — either a result to format or an error string. */
+  private _content: CachedResult | string | undefined;
 
-  /** Stable key map: "docUri::offset" → numeric key */
-  private _keyMap = new Map<string, string>();
-  private _nextKey = 0;
+  private _uri = vscode.Uri.from({
+    scheme: RESULTS_SCHEME,
+    path: `/${ACTIVE_KEY}`,
+  });
+
+  // ── Public API ───────────────────────────────────────────────────────
 
   /**
-   * Get or create a stable key for a (docUri, startOffset) pair.
+   * Store a query result and notify the peek view to refresh.
+   * Returns the stable virtual URI that the peek widget should display.
    */
-  private _getKey(docUri: string, startOffset: number): string {
-    const cacheKey = `${docUri}::${startOffset}`;
-    let key = this._keyMap.get(cacheKey);
-    if (!key) {
-      key = String(this._nextKey++);
-      this._keyMap.set(cacheKey, key);
-    }
-    return key;
-  }
-
-  private _buildUri(key: string): vscode.Uri {
-    return vscode.Uri.from({
-      scheme: RESULTS_SCHEME,
-      path: `/${key}`,
-    });
+  setActivePeekResult(result: CachedResult): vscode.Uri {
+    this._content = result;
+    this._onDidChange.fire(this._uri);
+    return this._uri;
   }
 
   /**
-   * Store a result in the provider and return the URI to access it.
-   * Reuses the same URI for the same (docUri, startOffset) pair.
+   * Store an error message and notify the peek view to refresh.
+   * Returns the stable virtual URI.
    */
-  setResult(
-    docUri: string,
-    startOffset: number,
-    result: CachedResult
-  ): vscode.Uri {
-    const key = this._getKey(docUri, startOffset);
-    this._content.set(key, result);
-    const uri = this._buildUri(key);
-    this._onDidChange.fire(uri);
-    return uri;
+  setActivePeekError(errorMessage: string): vscode.Uri {
+    this._content = errorMessage;
+    this._onDidChange.fire(this._uri);
+    return this._uri;
   }
 
-  /**
-   * Store an error message for display in the peek view.
-   */
-  setError(docUri: string, startOffset: number, errorMessage: string): void {
-    const key = this._getKey(docUri, startOffset);
-    this._content.set(key, errorMessage);
-    const uri = this._buildUri(key);
-    this._onDidChange.fire(uri);
-  }
+  // ── TextDocumentContentProvider ──────────────────────────────────────
 
-  /**
-   * Get the URI for a (docUri, startOffset) pair, if it exists.
-   */
-  getUri(docUri: string, startOffset: number): vscode.Uri | undefined {
-    const cacheKey = `${docUri}::${startOffset}`;
-    const key = this._keyMap.get(cacheKey);
-    if (!key) return undefined;
-    return this._buildUri(key);
-  }
-
-  provideTextDocumentContent(uri: vscode.Uri): string {
-    const key = uri.path.replace(/^\//, "");
-    const content = this._content.get(key);
-    if (!content) return "No result data available.";
+  provideTextDocumentContent(_uri: vscode.Uri): string {
+    if (!this._content) return "No result data available.";
 
     // Error string
-    if (typeof content === "string") {
-      return `  Error\n${"─".repeat(40)}\n${content}`;
+    if (typeof this._content === "string") {
+      return `  Error\n${"─".repeat(40)}\n${this._content}`;
     }
 
     const maxRows = getMaxPeekRows();
-    return formatResultAsText(content, maxRows);
+    return formatResultAsText(this._content, maxRows);
   }
 
   dispose(): void {
     this._onDidChange.dispose();
-    this._content.clear();
-    this._keyMap.clear();
+    this._content = undefined;
   }
 }
 
@@ -129,10 +99,7 @@ function getMaxPeekRows(): number {
 /**
  * Format a cached query result as a readable ASCII table.
  */
-export function formatResultAsText(
-  cached: CachedResult,
-  maxRows: number
-): string {
+function formatResultAsText(cached: CachedResult, maxRows: number): string {
   const { meta, page } = cached;
 
   // Header: SQL preview + stats
