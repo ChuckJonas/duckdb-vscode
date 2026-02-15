@@ -169,13 +169,14 @@ export function ColumnFilterPopover({
     
     // Range mode (between)
     if (rangeMin && rangeMax) {
-      const min = isNumeric ? Number(rangeMin) : rangeMin;
-      const max = isNumeric ? Number(rangeMax) : rangeMax;
+      const value: [number, number] | [string, string] = isNumeric
+        ? [Number(rangeMin), Number(rangeMax)]
+        : [rangeMin, rangeMax];
       onApply({
         id: generateFilterId(),
         column,
         operator: 'between',
-        value: [min, max],
+        value,
       });
       return;
     }

@@ -168,7 +168,7 @@ export function Histogram({ data, highlightValue, highlightRange, dataMin, dataM
               const start = parseBucketStart(displayData[0].bucket);
               const end = parseBucketEnd(displayData[displayData.length - 1].bucket);
               if (start !== null && end !== null) {
-                return formatNumber((start + end) / 2);
+                return formatAxisNumber((start + end) / 2);
               }
               return '';
             })() : ''}
