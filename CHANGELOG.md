@@ -4,6 +4,17 @@ All notable changes to the "duckdb" extension will be documented in this file.
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.0.19] - 2026-02-16
+
+### Added
+- **Data File Viewer**: open `.parquet`, `.csv`, `.tsv`, `.json`, `.jsonl`, and `.ndjson` files directly in the DuckDB results view — no more "binary file" errors for Parquet, and CSV files render as a rich data table out of the box
+- Parquet and CSV/TSV auto-open with DuckDB by default; JSON/JSONL available via **Open With… → DuckDB Data Viewer**
+- New settings to control auto-open behavior:
+  - `duckdb.fileViewer.parquet` (default: on)
+  - `duckdb.fileViewer.csv` (default: on)
+  - `duckdb.fileViewer.json` (default: off — plain `.json` is never auto-opened to avoid disrupting config files)
+- Full results experience for data files: pagination, sorting, filtering, column stats, export, and refresh all work the same as regular query results
+
 ## [0.0.16] - 2026-02-14
 
 ### Added

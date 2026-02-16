@@ -694,7 +694,7 @@ async function handleRefreshQuery(
 /**
  * Handle export request - save cached query results to file using DuckDB COPY
  */
-async function handleExport(
+export async function handleExport(
   db: ReturnType<typeof getDuckDBService>,
   cacheId: string,
   format: "csv" | "parquet" | "json" | "jsonl" | "csv-tab" | "json-tab",

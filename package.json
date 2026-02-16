@@ -2,7 +2,7 @@
   "name": "duckdb",
   "displayName": "DuckDB",
   "description": "A DuckDB client for VS Code",
-  "version": "0.0.18",
+  "version": "0.0.19",
   "publisher": "chuckjonas",
   "icon": "resources/icon.png",
   "repository": {
@@ -787,9 +787,51 @@
           "minimum": 200,
           "maximum": 5000,
           "description": "Debounce delay (ms) for live preview mode. Higher values reduce query frequency when typing."
+        },
+        "duckdb.fileViewer.parquet": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically open `.parquet` files with the DuckDB data viewer, replacing the default binary file error."
+        },
+        "duckdb.fileViewer.csv": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically open `.csv` and `.tsv` files with the DuckDB data viewer.\n\nWhen disabled, you can still open individual files with DuckDB via **right-click → Open With… → DuckDB Data Viewer**."
+        },
+        "duckdb.fileViewer.json": {
+          "type": "boolean",
+          "default": false,
+          "markdownDescription": "Automatically open `.jsonl` and `.ndjson` files with the DuckDB data viewer.\n\nPlain `.json` files are always available via **Open With…** but are never auto-opened (they are too commonly used for configuration)."
         }
       }
     },
+    "customEditors": [
+      {
+        "viewType": "duckdb.dataFileViewer",
+        "displayName": "DuckDB Data Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*.parquet"
+          },
+          {
+            "filenamePattern": "*.csv"
+          },
+          {
+            "filenamePattern": "*.tsv"
+          },
+          {
+            "filenamePattern": "*.json"
+          },
+          {
+            "filenamePattern": "*.jsonl"
+          },
+          {
+            "filenamePattern": "*.ndjson"
+          }
+        ],
+        "priority": "option"
+      }
+    ],
     "configurationDefaults": {
       "editor.peekWidgetDefaultFocus": "editor"
     }

@@ -85,6 +85,10 @@ import {
 } from "./services/extensionsService";
 import { registerSqlFormatter } from "./providers/SqlFormattingProvider";
 import {
+  DataFileEditorProvider,
+  syncEditorAssociations,
+} from "./providers/DataFileEditorProvider";
+import {
   showExecutionDecorations,
   showErrorDecoration,
   mapStatementsToLines,
@@ -2513,6 +2517,30 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Register SQL formatting provider (Format Document / Format Selection)
   registerSqlFormatter(context);
+
+  // Register Data File Editor (parquet, csv, json viewer)
+  const dataFileProvider = new DataFileEditorProvider(context);
+  context.subscriptions.push(
+    vscode.window.registerCustomEditorProvider(
+      DataFileEditorProvider.viewType,
+      dataFileProvider,
+      { supportsMultipleEditorsPerDocument: false }
+    )
+  );
+
+  // Sync editor associations on activation and when settings change
+  syncEditorAssociations().catch((err) =>
+    console.error("🦆 Failed to sync editor associations:", err)
+  );
+  context.subscriptions.push(
+    vscode.workspace.onDidChangeConfiguration((e) => {
+      if (e.affectsConfiguration("duckdb.fileViewer")) {
+        syncEditorAssociations().catch((err) =>
+          console.error("🦆 Failed to sync editor associations:", err)
+        );
+      }
+    })
+  );
 
   // Register "Go to Source" command for results panel
   const goToSourceCmd = vscode.commands.registerCommand(
