@@ -34,9 +34,11 @@ Performance Note: When you execute a query, the extension will create a temporar
 
 ### File Integration
 
-- **Right-click to query** — Select files in Explorer → "DuckDB: Query File". CSV, Parquet, JSON, JSONL, TSV, and XLSX supported.
+- **Auto-open data files** — `.parquet` and `.csv`/`.tsv` files open directly in the DuckDB results view with full pagination, sorting, filtering, and export. No more "binary file" errors for Parquet!
+- **JSON/JSONL support** — `.json`, `.jsonl`, and `.ndjson` available via **right-click → Open With… → DuckDB Data Viewer**
+- **Configurable** — Each file type can be toggled via `duckdb.fileViewer.*` settings
+- **Right-click to query** — Select files in Explorer → "DuckDB: Query File" to open a SQL editor with `SELECT * FROM '{file}'`
 - **Summarize files** — Quick data profiling with SUMMARIZE
-- **`.duckdb` file association** — Files with the `.duckdb` extension are treated as SQL with full editor support
 
 ### Results Table
 
@@ -58,7 +60,7 @@ Performance Note: When you execute a query, the extension will create a temporar
 - **Manage databases** — Create, attach, and switch between databases
 - **Status bar selector** — Quick database switching
 - **Schema browser** — Databases → Schemas → Tables/Views → Columns
-- **Quick actions** — SELECT TOP 100, DESCRIBE, SUMMARIZE, View Definition, Drop Table
+- **Quick actions** — Select Top Rows, DESCRIBE, SUMMARIZE, View Definition, Drop Table
 
 ### Inline Peek Results
 
@@ -173,6 +175,20 @@ Maximum rows in the peek preview (default: `50`, range: 5–500).
 
 Debounce delay in ms for live preview (default: `600`, range: 200–5000). Higher values reduce query frequency.
 
+### Data File Viewer
+
+#### `duckdb.fileViewer.parquet`
+
+Automatically open `.parquet` files with the DuckDB data viewer (default: `true`).
+
+#### `duckdb.fileViewer.csv`
+
+Automatically open `.csv` and `.tsv` files with the DuckDB data viewer (default: `true`).
+
+#### `duckdb.fileViewer.json`
+
+Automatically open `.jsonl` and `.ndjson` files with the DuckDB data viewer (default: `false`). Plain `.json` files are always available via **Open With…** but are never auto-opened to avoid disrupting config files.
+
 ### Results Display
 
 #### `duckdb.resultsLocation`
@@ -193,6 +209,16 @@ Rows per page in results table (default: `1000`, range: 100–10,000).
 #### `duckdb.maxCopyRows`
 
 Maximum rows for copy/export operations (default: `50000`, range: 1,000–1,000,000).
+
+### Database Explorer
+
+#### `duckdb.explorer.defaultRowLimit`
+
+Default row limit for Select Top Rows and Select Distinct Values in the database explorer (default: `1000`, range: 1–100,000).
+
+#### `duckdb.explorer.ignoredSchemas`
+
+Schema names to hide from the database explorer tree (default: `[]`). Schemas can also be hidden via right-click → "Hide Schema" in the explorer.
 
 ### Autocomplete
 
@@ -245,60 +271,17 @@ Maximum history entries to keep (default: `1000`).
 
 ## Commands
 
-| Command                    | Keybinding  | Description                            |
-| -------------------------- | ----------- | -------------------------------------- |
-| DuckDB: Execute Query      | `Cmd+Enter`       | Run all SQL in active editor           |
-| DuckDB: Run Statement      | —                  | Run a single statement (via CodeLens)  |
-| DuckDB: Run at Cursor      | `Ctrl+Shift+Enter` | Run the statement under the cursor     |
-| DuckDB: Select Database    | —           | Switch active database                 |
-| DuckDB: Manage Extensions  | —           | Install/remove extensions              |
-| DuckDB: Query File         | —           | Query a data file (right-click)        |
-| DuckDB: Summarize File     | —           | Profile a data file                    |
-| DuckDB: Copy Query         | —           | Copy SELECT statement for file         |
-| Go to Source File          | —           | Navigate from results to source SQL    |
-
----
-
-## Releasing
-
-Releases are automated via GitHub Actions. Pushing a version tag triggers the CI/CD pipeline which builds, packages, and publishes the extension.
-
-### Steps
-
-1. **Bump the version** in `package.json`:
-
-   ```json
-   "version": "0.0.15"
-   ```
-
-2. **Commit the version bump**:
-
-   ```bash
-   git add package.json
-   git commit -m "version bump"
-   ```
-
-3. **Tag and push**:
-
-   ```bash
-   git tag v0.0.15
-   git push origin main --tags
-   ```
-
-### What happens
-
-The `v*` tag triggers the [CI/CD workflow](.github/workflows/ci.yml):
-
-1. **Build** — Lint, compile, and run tests on macOS, Ubuntu, and Windows
-2. **Package** — Create platform-specific `.vsix` files for `darwin-arm64`, `darwin-x64`, `linux-x64`, and `win32-x64`
-3. **Publish** — Upload to both [VS Code Marketplace](https://marketplace.visualstudio.com/items?itemName=chuckjonas.duckdb) and [Open VSX](https://open-vsx.org/extension/chuckjonas/duckdb)
-
-### Secrets
-
-The publish steps require these repository secrets:
-
-- `VSCE_PAT` — VS Code Marketplace Personal Access Token
-- `OVSX_PAT` — Open VSX Registry Personal Access Token
+| Command                    | Keybinding                          | Description                            |
+| -------------------------- | ----------------------------------- | -------------------------------------- |
+| DuckDB: Execute Query      | `Cmd+Enter` / `Ctrl+Enter`          | Run all SQL in active editor           |
+| DuckDB: Run Statement      | —                                   | Run a single statement (via CodeLens)  |
+| DuckDB: Run at Cursor      | `Cmd+Shift+Enter` / `Ctrl+Shift+Enter` | Run the statement under the cursor |
+| DuckDB: Select Database    | —                                   | Switch active database                 |
+| DuckDB: Manage Extensions  | —                                   | Install/remove extensions              |
+| DuckDB: Query File         | —                                   | Query a data file (right-click)        |
+| DuckDB: Summarize File     | —                                   | Profile a data file                    |
+| DuckDB: Copy Query         | —                                   | Copy SELECT statement for file         |
+| Go to Source File          | —                                   | Navigate from results to source SQL    |
 
 ---
 
