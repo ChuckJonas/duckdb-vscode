@@ -17,6 +17,13 @@
     "Programming Languages",
     "Other"
   ],
+  "keywords": [
+    "duckdb",
+    "parquet",
+    "csv",
+    "tsv",
+    "jsonl"
+  ],
   "activationEvents": [
     "onStartupFinished",
     "onView:duckdb.databaseExplorer"
