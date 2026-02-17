@@ -1,4 +1,7 @@
 import { DuckDBInstance, DuckDBConnection } from "@duckdb/node-api";
+import * as os from "os";
+import * as path from "path";
+import * as fs from "fs";
 
 // ============================================================================
 // TYPES
@@ -325,7 +328,11 @@ export class DuckDBService {
   /**
    * Initialize an in-memory DuckDB database
    */
-  async initialize(): Promise<void> {
+  async initialize(options?: {
+    memoryLimit?: string;
+    maxTempDirectorySize?: string;
+    tempDirectory?: string;
+  }): Promise<void> {
     if (this.instance) {
       return;
     }
@@ -340,9 +347,23 @@ export class DuckDBService {
 
     // Cap DuckDB memory so it spills to disk instead of crashing the
     // VS Code extension host process (~1.5 GB heap limit).
-    await this.connection.run("SET memory_limit = '1GB'");
+    const memoryLimit = options?.memoryLimit || "1.5GB";
+    await this.connection.run(`SET memory_limit = '${memoryLimit}'`);
 
-    console.log("🦆 DuckDB initialized successfully!");
+    // Use OS temp directory so spill files don't pollute the user's
+    // project and get cleaned up by the OS if the process crashes.
+    const tempDir =
+      options?.tempDirectory || path.join(os.tmpdir(), "duckdb-vscode");
+    fs.mkdirSync(tempDir, { recursive: true });
+    await this.connection.run(`SET temp_directory = '${tempDir}'`);
+
+    // Allow DuckDB to spill to disk when memory_limit is exceeded
+    const maxTempSize = options?.maxTempDirectorySize || "15GB";
+    await this.connection.run(`SET max_temp_directory_size = '${maxTempSize}'`);
+
+    console.log(
+      `🦆 DuckDB initialized (memory_limit=${memoryLimit}, temp_directory=${tempDir}, max_temp_directory_size=${maxTempSize})`
+    );
   }
 
   /**

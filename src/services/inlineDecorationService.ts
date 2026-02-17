@@ -2,6 +2,7 @@
  * Inline Decoration Service
  *
  * Shows transient execution feedback directly in the editor:
+ *   Loading: "⏳ running (3s)"     (muted, italic, live timer)
  *   Success: "✓ executed (3.2ms)"  (muted, italic)
  *   Error:   "✗ Parser Error: ..." (red, italic)
  * Auto-fades after a configurable timeout.
@@ -54,8 +55,87 @@ function clearState(state: DecorationState): void {
 }
 
 // ============================================================================
+// Loading decoration (live timer while query executes)
+// ============================================================================
+
+interface LoadingState {
+  type: vscode.TextEditorDecorationType;
+  editor?: vscode.TextEditor;
+  lines: number[];
+  startTime: number;
+  interval?: ReturnType<typeof setInterval>;
+}
+
+const loading: LoadingState = {
+  type: vscode.window.createTextEditorDecorationType({ isWholeLine: false }),
+  lines: [],
+  startTime: 0,
+};
+
+function updateLoadingText(): void {
+  if (!loading.editor) {
+    return;
+  }
+  const elapsed = Math.floor((Date.now() - loading.startTime) / 1000);
+  const text = `  ⏳ running (${elapsed}s)`;
+
+  const decorations: vscode.DecorationOptions[] = loading.lines.map((line) => ({
+    range: new vscode.Range(
+      line,
+      Number.MAX_SAFE_INTEGER,
+      line,
+      Number.MAX_SAFE_INTEGER
+    ),
+    renderOptions: {
+      after: {
+        contentText: text,
+        color: new vscode.ThemeColor("editorCodeLens.foreground"),
+        fontStyle: "italic" as const,
+      },
+    },
+  }));
+
+  loading.editor.setDecorations(loading.type, decorations);
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
+
+/**
+ * Show a loading decoration with a live elapsed-time counter.
+ * Call `clearLoadingDecoration()` when execution finishes.
+ */
+export function showLoadingDecoration(
+  editor: vscode.TextEditor,
+  lines: number[]
+): void {
+  clearLoadingDecoration();
+  // Clear any lingering success decoration so they don't overlap
+  clearState(success);
+
+  loading.editor = editor;
+  loading.lines = lines;
+  loading.startTime = Date.now();
+
+  updateLoadingText();
+  loading.interval = setInterval(updateLoadingText, 1000);
+}
+
+/**
+ * Clear the loading decoration and stop the timer.
+ */
+export function clearLoadingDecoration(): void {
+  if (loading.interval) {
+    clearInterval(loading.interval);
+    loading.interval = undefined;
+  }
+  if (loading.editor) {
+    loading.editor.setDecorations(loading.type, []);
+    loading.editor = undefined;
+  }
+  loading.lines = [];
+}
 
 /**
  * Show inline success decorations on statement lines.
@@ -154,8 +234,10 @@ export function mapStatementsToLines(
  * Dispose all decoration state. Call from extension deactivate().
  */
 export function disposeDecorations(): void {
+  clearLoadingDecoration();
   clearState(success);
   clearState(error);
+  loading.type.dispose();
   success.type.dispose();
   error.type.dispose();
 }

@@ -30,6 +30,7 @@ import {
 import { getHistoryService } from "./services/historyService";
 import {
   registerSqlCodeLens,
+  SqlCodeLensProvider,
   setGetCurrentDatabase,
   setGetCachedResultsForDoc,
   parseSqlStatements,
@@ -91,6 +92,8 @@ import {
 import {
   showExecutionDecorations,
   showErrorDecoration,
+  showLoadingDecoration,
+  clearLoadingDecoration,
   mapStatementsToLines,
   disposeDecorations,
 } from "./services/inlineDecorationService";
@@ -98,7 +101,7 @@ import {
 // Current database state
 let currentDatabase = "memory";
 let statusBarItem: vscode.StatusBarItem;
-let codeLensProvider: { refresh(): void } | undefined;
+let codeLensProvider: SqlCodeLensProvider | undefined;
 
 // Diagnostic collection for SQL errors
 let diagnosticCollection: vscode.DiagnosticCollection;
@@ -256,7 +259,15 @@ export async function activate(context: vscode.ExtensionContext) {
   // Initialize DuckDB on activation
   const db = getDuckDBService();
   try {
-    await db.initialize();
+    const duckdbConfig = vscode.workspace.getConfiguration("duckdb");
+    const memoryLimit = duckdbConfig.get<string>("memoryLimit", "1.5GB");
+    const maxTempDirectorySize = duckdbConfig.get<string>(
+      "maxTempDirectorySize",
+      "15GB"
+    );
+    const tempDirectory =
+      duckdbConfig.get<string>("tempDirectory", "") || undefined;
+    await db.initialize({ memoryLimit, maxTempDirectorySize, tempDirectory });
 
     // Change process working directory to workspace root
     // This affects DuckDB's file path autocomplete
@@ -349,9 +360,18 @@ export async function activate(context: vscode.ExtensionContext) {
         ? 0
         : editor.document.offsetAt(selection.start);
 
+      // Show loading indicator
+      const loadingLine = selection.isEmpty ? 0 : editor.selection.start.line;
+      const docUri = editor.document.uri.toString();
+      showLoadingDecoration(editor, [loadingLine]);
+      codeLensProvider?.setRunningAll(docUri);
+
       try {
         const result = await db.executeQuery(sql, pageSize);
-        const sourceId = editor.document.uri.toString();
+        clearLoadingDecoration();
+        codeLensProvider?.clearRunningAll(docUri);
+
+        const sourceId = docUri;
         showResultsPanel(result, context, sourceId, pageSize, getMaxCopyRows());
         showSuccessDecorations(editor, sql, sqlStartOffset, result.statements);
 
@@ -396,6 +416,9 @@ export async function activate(context: vscode.ExtensionContext) {
           databaseExplorer.refresh();
         }
       } catch (error) {
+        clearLoadingDecoration();
+        codeLensProvider?.clearRunningAll(docUri);
+
         // Record failed query in history
         const dbName = await getCurrentDatabase(async (s) => ({
           rows: await db.query(s),
@@ -442,18 +465,30 @@ export async function activate(context: vscode.ExtensionContext) {
 
       const startTime = Date.now();
       const pageSize = getPageSize();
+      const docUri = uri.toString();
+
+      // Show loading indicator on the statement's first line
+      const loadingLine = document.positionAt(startOffset).line;
+      const activeEditorForLoading = vscode.window.activeTextEditor;
+      if (
+        activeEditorForLoading &&
+        activeEditorForLoading.document.uri.toString() === docUri
+      ) {
+        showLoadingDecoration(activeEditorForLoading, [loadingLine]);
+      }
+      codeLensProvider?.setRunning(docUri, startOffset);
 
       try {
         const result = await db.executeQuery(sql, pageSize);
-        const sourceId = uri.toString(); // Use document URI to reuse panel per file
+        clearLoadingDecoration();
+        codeLensProvider?.clearRunning(docUri, startOffset);
+
+        const sourceId = docUri;
         showResultsPanel(result, context, sourceId, pageSize, getMaxCopyRows());
 
         // Show inline decorations for non-result statements (DDL/DML)
         const activeEditor = vscode.window.activeTextEditor;
-        if (
-          activeEditor &&
-          activeEditor.document.uri.toString() === uri.toString()
-        ) {
+        if (activeEditor && activeEditor.document.uri.toString() === docUri) {
           showSuccessDecorations(
             activeEditor,
             sql,
@@ -483,7 +518,7 @@ export async function activate(context: vscode.ExtensionContext) {
           columnCount: lastStmt?.meta.columns.length || 0,
           error: null,
           databaseName: dbName,
-          sourceFile: uri.toString(),
+          sourceFile: docUri,
         });
 
         updateStatusBar();
@@ -496,6 +531,9 @@ export async function activate(context: vscode.ExtensionContext) {
           databaseExplorer.refresh();
         }
       } catch (error) {
+        clearLoadingDecoration();
+        codeLensProvider?.clearRunning(docUri, startOffset);
+
         const dbName = await getCurrentDatabase(async (s) => ({
           rows: await db.query(s),
         })).catch(() => currentDatabase);
@@ -507,15 +545,12 @@ export async function activate(context: vscode.ExtensionContext) {
           columnCount: 0,
           error: String(error),
           databaseName: dbName,
-          sourceFile: uri.toString(),
+          sourceFile: docUri,
         });
 
         if (error instanceof DuckDBQueryError) {
           const activeEditor = vscode.window.activeTextEditor;
-          if (
-            activeEditor &&
-            activeEditor.document.uri.toString() === uri.toString()
-          ) {
+          if (activeEditor && activeEditor.document.uri.toString() === docUri) {
             const fallbackLine = document.positionAt(startOffset).line;
             handleDuckDBError(
               error,

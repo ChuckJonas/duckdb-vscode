@@ -42,6 +42,12 @@ export class SqlCodeLensProvider implements vscode.CodeLensProvider {
   private _onDidChangeCodeLenses = new vscode.EventEmitter<void>();
   readonly onDidChangeCodeLenses = this._onDidChangeCodeLenses.event;
 
+  /** Tracks which statements are currently executing (keyed by "docUri:startOffset") */
+  private _runningStatements = new Set<string>();
+
+  /** True when an entire file is executing via "Run All" */
+  private _runningAll = new Set<string>();
+
   /**
    * Refresh CodeLenses when document changes
    */
@@ -49,10 +55,52 @@ export class SqlCodeLensProvider implements vscode.CodeLensProvider {
     this._onDidChangeCodeLenses.fire();
   }
 
+  /**
+   * Mark a statement as currently running.
+   */
+  setRunning(docUri: string, startOffset: number): void {
+    this._runningStatements.add(`${docUri}:${startOffset}`);
+    this.refresh();
+  }
+
+  /**
+   * Clear the running state for a statement.
+   */
+  clearRunning(docUri: string, startOffset: number): void {
+    this._runningStatements.delete(`${docUri}:${startOffset}`);
+    this.refresh();
+  }
+
+  /**
+   * Mark an entire document as running (Run All).
+   */
+  setRunningAll(docUri: string): void {
+    this._runningAll.add(docUri);
+    this.refresh();
+  }
+
+  /**
+   * Clear the Run All running state.
+   */
+  clearRunningAll(docUri: string): void {
+    this._runningAll.delete(docUri);
+    this.refresh();
+  }
+
+  private _isRunning(docUri: string, startOffset: number): boolean {
+    return this._runningStatements.has(`${docUri}:${startOffset}`);
+  }
+
+  private _isRunningAll(docUri: string): boolean {
+    return this._runningAll.has(docUri);
+  }
+
   provideCodeLenses(document: vscode.TextDocument): vscode.CodeLens[] {
     const text = document.getText();
     const statements = parseSqlStatements(text);
     const lenses: vscode.CodeLens[] = [];
+    const docUri = document.uri.toString();
+    const isRunningAll = this._isRunningAll(docUri);
 
     // Always add actions at the top if there's any SQL
     if (statements.length > 0) {
@@ -69,21 +117,34 @@ export class SqlCodeLensProvider implements vscode.CodeLensProvider {
         })
       );
 
-      // Run All button
-      lenses.push(
-        new vscode.CodeLens(topRange, {
-          title: "$(play) Run All",
-          command: "duckdb.executeQuery",
-          tooltip: "Execute all SQL statements in this file",
-        })
-      );
+      // Run All button — show spinner when running
+      if (isRunningAll) {
+        lenses.push(
+          new vscode.CodeLens(topRange, {
+            title: "$(loading~spin) Running…",
+            command: "",
+            tooltip: "Query is executing…",
+          })
+        );
+      } else {
+        lenses.push(
+          new vscode.CodeLens(topRange, {
+            title: "$(play) Run All",
+            command: "duckdb.executeQuery",
+            tooltip: "Execute all SQL statements in this file",
+          })
+        );
+      }
     }
 
     // Add per-statement actions
-    const cachedResults = getCachedResultsForDoc(document.uri.toString());
+    const cachedResults = getCachedResultsForDoc(docUri);
 
     for (let i = 0; i < statements.length; i++) {
       const stmt = statements[i];
+      const stmtRunning =
+        isRunningAll || this._isRunning(docUri, stmt.startOffset);
+
       // For multi-statement files, place actions above each statement
       // For single-statement files, place at the top alongside Run All
       const range =
@@ -93,43 +154,32 @@ export class SqlCodeLensProvider implements vscode.CodeLensProvider {
 
       // "Run Statement" only shown when there are multiple statements
       if (statements.length > 1) {
-        const preview = getStatementPreview(stmt.sql);
-        lenses.push(
-          new vscode.CodeLens(range, {
-            title: `$(play) Run Statement`,
-            command: "duckdb.runStatement",
-            arguments: [document.uri, stmt.startOffset, stmt.endOffset],
-            tooltip: `Execute: ${preview}`,
-          })
-        );
+        if (stmtRunning) {
+          lenses.push(
+            new vscode.CodeLens(range, {
+              title: `$(loading~spin) Running…`,
+              command: "",
+              tooltip: "Statement is executing…",
+            })
+          );
+        } else {
+          const preview = getStatementPreview(stmt.sql);
+          lenses.push(
+            new vscode.CodeLens(range, {
+              title: `$(play) Run Statement`,
+              command: "duckdb.runStatement",
+              arguments: [document.uri, stmt.startOffset, stmt.endOffset],
+              tooltip: `Execute: ${preview}`,
+            })
+          );
+        }
       }
 
       // "Peek" is always available — executes on demand if not cached
-      lenses.push(
-        new vscode.CodeLens(range, {
-          title: `$(eye) Peek`,
-          command: "duckdb.peekResults",
-          arguments: [
-            document.uri,
-            stmt.startOffset,
-            stmt.endOffset,
-            stmt.endLine,
-          ],
-          tooltip: "Run and preview results inline",
-        })
-      );
-
-      // Show result summary if we have cached results
-      const cached = cachedResults.get(stmt.startOffset);
-      if (cached) {
-        const { meta } = cached;
-        const summary = meta.hasResults
-          ? `${meta.totalRows} rows (${meta.executionTime.toFixed(1)}ms)`
-          : `executed (${meta.executionTime.toFixed(1)}ms)`;
-
+      if (!stmtRunning) {
         lenses.push(
           new vscode.CodeLens(range, {
-            title: `$(check) ${summary}`,
+            title: `$(eye) Peek`,
             command: "duckdb.peekResults",
             arguments: [
               document.uri,
@@ -137,9 +187,34 @@ export class SqlCodeLensProvider implements vscode.CodeLensProvider {
               stmt.endOffset,
               stmt.endLine,
             ],
-            tooltip: "Click to peek results",
+            tooltip: "Run and preview results inline",
           })
         );
+      }
+
+      // Show result summary if we have cached results (hide while running)
+      if (!stmtRunning) {
+        const cached = cachedResults.get(stmt.startOffset);
+        if (cached) {
+          const { meta } = cached;
+          const summary = meta.hasResults
+            ? `${meta.totalRows} rows (${meta.executionTime.toFixed(1)}ms)`
+            : `executed (${meta.executionTime.toFixed(1)}ms)`;
+
+          lenses.push(
+            new vscode.CodeLens(range, {
+              title: `$(check) ${summary}`,
+              command: "duckdb.peekResults",
+              arguments: [
+                document.uri,
+                stmt.startOffset,
+                stmt.endOffset,
+                stmt.endLine,
+              ],
+              tooltip: "Click to peek results",
+            })
+          );
+        }
       }
     }
 

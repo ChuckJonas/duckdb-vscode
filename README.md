@@ -20,7 +20,7 @@ This extension brings DuckDB directly into VS Code with a focus on creating a pr
 
 All queries execute using the [DuckDB Node API](https://www.npmjs.com/package/@duckdb/node-api) embedded in VS Code. By default, queries run against an in-memory database that resets when VS Code closes. You can attach persistent `.duckdb` files or connect to remote sources like Postgres, S3, or Google Sheets.
 
-Performance Note: When you execute a query, the extension will create a temporary table which is then used for pagination, sorting, filtering, and exporting.
+Performance Note: When you execute a query, the extension creates a temporary table to enable pagination, sorting, filtering, and exporting. For large datasets, DuckDB will spill to disk automatically — see [Memory & Performance](#memory--performance) settings if you run into limits.
 
 ## Features
 
@@ -209,6 +209,43 @@ Rows per page in results table (default: `1000`, range: 100–10,000).
 #### `duckdb.maxCopyRows`
 
 Maximum rows for copy/export operations (default: `50000`, range: 1,000–1,000,000).
+
+### Memory & Performance
+
+The extension runs DuckDB inside VS Code's extension host process, which has a limited memory budget (~1.5 GB). To avoid crashing the extension when querying large files, DuckDB is configured to spill to disk when memory is exhausted.
+
+#### `duckdb.memoryLimit`
+
+Maximum memory DuckDB can use before spilling to disk (default: `"1.5GB"`).
+
+> **Warning:** The VS Code extension host has a hard heap limit of approximately 1.5 GB. Setting this significantly higher (e.g. `"3GB"`) **will crash the entire extension** with no error message — VS Code simply kills the process. If you experience silent crashes, check this setting first.
+
+#### `duckdb.maxTempDirectorySize`
+
+Maximum disk space for DuckDB temp/spill files (default: `"15GB"`).
+
+When DuckDB exceeds `memoryLimit`, it spills data to temporary files on disk. If those spill files exceed this limit, you'll see an error like:
+
+```
+DuckDB IO Error: failed to offload data block of size 256.0 KiB (5.8 GiB/5.8 GiB used).
+This limit was set by the 'max_temp_directory_size' setting.
+```
+
+Increase this if you work with very large datasets:
+
+```json
+{ "duckdb.maxTempDirectorySize": "50GB" }
+```
+
+#### `duckdb.tempDirectory`
+
+Directory for DuckDB temp/spill files (default: OS temp directory, e.g. `/tmp/duckdb-vscode` on macOS/Linux).
+
+Leave empty to use the OS temp directory, which is automatically cleaned up on reboot. Override this if the default location doesn't have enough disk space or isn't writable:
+
+```json
+{ "duckdb.tempDirectory": "/path/to/large/disk/duckdb-temp" }
+```
 
 ### Database Explorer
 

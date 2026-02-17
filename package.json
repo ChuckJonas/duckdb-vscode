@@ -2,7 +2,7 @@
   "name": "duckdb",
   "displayName": "DuckDB",
   "description": "A DuckDB client for VS Code",
-  "version": "0.0.20",
+  "version": "0.0.21",
   "publisher": "chuckjonas",
   "icon": "resources/icon.png",
   "repository": {
@@ -699,6 +699,25 @@
           "minimum": 1000,
           "maximum": 1000000,
           "description": "Maximum rows for copy/export operations"
+        },
+        "duckdb.memoryLimit": {
+          "type": "string",
+          "default": "1.5GB",
+          "description": "Maximum memory DuckDB can use before spilling to disk. The VS Code extension host has a ~1.5GB heap limit — setting this higher may crash the extension.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(KB|MB|GB|TB)$",
+          "patternErrorMessage": "Must be a size like '512MB', '1GB', '1.5GB', etc."
+        },
+        "duckdb.maxTempDirectorySize": {
+          "type": "string",
+          "default": "15GB",
+          "description": "Maximum disk space DuckDB can use for spilling data to temp files when memory_limit is exceeded. Set to '0' to use all available disk space.",
+          "pattern": "^[0-9]+(\\.[0-9]+)?(KB|MB|GB|TB)$",
+          "patternErrorMessage": "Must be a size like '5GB', '10GB', '50GB', etc."
+        },
+        "duckdb.tempDirectory": {
+          "type": "string",
+          "default": "",
+          "description": "Directory for DuckDB temp/spill files. Leave empty to use the OS temp directory."
         },
         "duckdb.resultsLocation": {
           "type": "string",
