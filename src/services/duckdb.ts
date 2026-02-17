@@ -338,6 +338,10 @@ export class DuckDBService {
     // Enable JSON error format for easier parsing
     await this.connection.run("SET errors_as_json = true");
 
+    // Cap DuckDB memory so it spills to disk instead of crashing the
+    // VS Code extension host process (~1.5 GB heap limit).
+    await this.connection.run("SET memory_limit = '1GB'");
+
     console.log("🦆 DuckDB initialized successfully!");
   }
 
