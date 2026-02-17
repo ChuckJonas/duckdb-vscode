@@ -1375,6 +1375,337 @@ export class DuckDBService {
   }
 
   /**
+   * Get lightweight metadata for a data file (DESCRIBE + COUNT).
+   * Cheap for parquet (reads footer metadata), fast for CSV/JSON.
+   */
+  async getFileMetadata(
+    filePath: string
+  ): Promise<{ columns: { name: string; type: string }[]; rowCount: number }> {
+    await this.initialize();
+
+    if (!this.connection) {
+      throw new Error("DuckDB connection not available");
+    }
+
+    const escaped = filePath.replace(/'/g, "''");
+    const [describeResult, countResult] = await Promise.all([
+      this.connection.runAndReadAll(`DESCRIBE SELECT * FROM '${escaped}'`),
+      this.connection.runAndReadAll(`SELECT COUNT(*) as cnt FROM '${escaped}'`),
+    ]);
+
+    const describeRows = describeResult.getRowObjectsJS();
+    const columns = describeRows.map((r) => ({
+      name: String(r.column_name),
+      type: String(r.column_type),
+    }));
+
+    const rowCount = Number(countResult.getRowObjectsJS()[0].cnt);
+
+    return { columns, rowCount };
+  }
+
+  /**
+   * Get column summaries for a file using SUMMARIZE (no cache needed).
+   * Returns distinct count, null percentage, and column type for each column.
+   * Cheap for Parquet (reads footer metadata), requires full scan for CSV/JSON.
+   */
+  async getFileSummaries(filePath: string): Promise<
+    Array<{
+      name: string;
+      distinctCount: number;
+      nullPercent: number;
+      inferredType: string;
+    }>
+  > {
+    await this.initialize();
+    if (!this.connection) {
+      throw new Error("DuckDB connection not available");
+    }
+
+    const escaped = filePath.replace(/'/g, "''");
+    const sql = `SUMMARIZE SELECT * FROM '${escaped}'`;
+
+    try {
+      const reader = await this.connection.runAndReadAll(sql);
+      const rows = reader.getRowObjectsJS() as Record<string, unknown>[];
+      return rows.map((row) => ({
+        name: row.column_name as string,
+        distinctCount: Number(row.approx_unique) || 0,
+        nullPercent: Number(row.null_percentage) || 0,
+        inferredType: row.column_type as string,
+      }));
+    } catch (e) {
+      console.error("SUMMARIZE file query failed:", e);
+      return [];
+    }
+  }
+
+  /**
+   * Get detailed column statistics for a single column in a file (no cache needed).
+   * Same stats as getCacheColumnStats but queries the file directly.
+   */
+  async getFileColumnStats(
+    filePath: string,
+    column: string
+  ): Promise<ColumnStats> {
+    await this.initialize();
+    if (!this.connection) {
+      throw new Error("DuckDB connection not available");
+    }
+
+    const escaped = filePath.replace(/'/g, "''");
+    const source = `'${escaped}'`;
+    const escapedCol = `"${column}"`;
+
+    // Basic stats
+    const basicSql = `
+      SELECT 
+        COUNT(*) as total,
+        COUNT(${escapedCol}) as non_null,
+        COUNT(*) - COUNT(${escapedCol}) as null_count,
+        COUNT(DISTINCT ${escapedCol}) as unique_count,
+        MIN(${escapedCol})::VARCHAR as min_val,
+        MAX(${escapedCol})::VARCHAR as max_val
+      FROM ${source}
+    `;
+
+    const basicReader = await this.connection.runAndReadAll(basicSql);
+    const basicRow = basicReader.getRowObjectsJS()[0] as Record<
+      string,
+      unknown
+    >;
+
+    // Detect column type
+    const typeCheckSql = `
+      SELECT 
+        CASE 
+          WHEN TRY_CAST(${escapedCol} AS BOOLEAN) IS NOT NULL 
+            AND ${escapedCol}::VARCHAR IN ('true', 'false', 'TRUE', 'FALSE', '1', '0') THEN 'boolean'
+          WHEN TRY_CAST(${escapedCol} AS DATE) IS NOT NULL 
+            OR TRY_CAST(${escapedCol} AS TIMESTAMP) IS NOT NULL THEN 'date'
+          WHEN TRY_CAST(${escapedCol} AS DOUBLE) IS NOT NULL THEN 'numeric'
+          ELSE 'string'
+        END as col_type
+      FROM ${source} 
+      WHERE ${escapedCol} IS NOT NULL
+      LIMIT 1
+    `;
+    const typeCheckReader = await this.connection.runAndReadAll(typeCheckSql);
+    const typeCheckRows = typeCheckReader.getRowObjectsJS() as Record<
+      string,
+      unknown
+    >[];
+    const detectedType =
+      typeCheckRows.length > 0 ? String(typeCheckRows[0].col_type) : "string";
+
+    const isBoolean = detectedType === "boolean";
+    const isDate = detectedType === "date";
+    const isNumeric = detectedType === "numeric" && !isBoolean;
+
+    const stats: ColumnStats = {
+      column,
+      type: isDate ? "date" : isNumeric ? "numeric" : "string",
+      total: Number(basicRow.total) || 0,
+      nonNull: Number(basicRow.non_null) || 0,
+      nullCount: Number(basicRow.null_count) || 0,
+      unique: Number(basicRow.unique_count) || 0,
+      min: basicRow.min_val as string | null,
+      max: basicRow.max_val as string | null,
+    };
+
+    // Use the same helpers — they take a source identifier
+    // We need to create a temp view so the helpers can reference it
+    const tempView = `__file_stats_${Date.now()}`;
+    await this.connection.run(
+      `CREATE OR REPLACE TEMP VIEW "${tempView}" AS SELECT * FROM ${source}`
+    );
+
+    try {
+      if (isDate) {
+        await this.addTimeseriesStats(stats, tempView, escapedCol);
+      } else if (isNumeric) {
+        await this.addNumericStats(stats, tempView, escapedCol);
+      } else {
+        await this.addCategoricalStats(stats, tempView, escapedCol);
+      }
+    } finally {
+      this.connection.run(`DROP VIEW IF EXISTS "${tempView}"`).catch(() => {});
+    }
+
+    return stats;
+  }
+
+  // ============================================================================
+  // TABLE METADATA (for database table/view overview)
+  // ============================================================================
+
+  /**
+   * Get lightweight metadata for a database table or view.
+   * Runs DESCRIBE + COUNT(*) against the qualified table name.
+   */
+  async getTableMetadata(
+    database: string,
+    schema: string,
+    tableName: string
+  ): Promise<{ columns: { name: string; type: string }[]; rowCount: number }> {
+    await this.initialize();
+    if (!this.connection) {
+      throw new Error("DuckDB connection not available");
+    }
+
+    const qualifiedName = `"${database}"."${schema}"."${tableName}"`;
+    const [describeResult, countResult] = await Promise.all([
+      this.connection.runAndReadAll(`DESCRIBE ${qualifiedName}`),
+      this.connection.runAndReadAll(
+        `SELECT COUNT(*) as cnt FROM ${qualifiedName}`
+      ),
+    ]);
+
+    const describeRows = describeResult.getRowObjectsJS();
+    const columns = describeRows.map((r) => ({
+      name: String(r.column_name),
+      type: String(r.column_type),
+    }));
+
+    const rowCount = Number(countResult.getRowObjectsJS()[0].cnt);
+    return { columns, rowCount };
+  }
+
+  /**
+   * Get column summaries for a database table using SUMMARIZE.
+   * Returns distinct count, null percentage, and column type for each column.
+   */
+  async getTableSummaries(
+    database: string,
+    schema: string,
+    tableName: string
+  ): Promise<
+    Array<{
+      name: string;
+      distinctCount: number;
+      nullPercent: number;
+      inferredType: string;
+    }>
+  > {
+    await this.initialize();
+    if (!this.connection) {
+      throw new Error("DuckDB connection not available");
+    }
+
+    const qualifiedName = `"${database}"."${schema}"."${tableName}"`;
+    const sql = `SUMMARIZE ${qualifiedName}`;
+
+    try {
+      const reader = await this.connection.runAndReadAll(sql);
+      const rows = reader.getRowObjectsJS() as Record<string, unknown>[];
+      return rows.map((row) => ({
+        name: row.column_name as string,
+        distinctCount: Number(row.approx_unique) || 0,
+        nullPercent: Number(row.null_percentage) || 0,
+        inferredType: row.column_type as string,
+      }));
+    } catch (e) {
+      console.error("SUMMARIZE table query failed:", e);
+      return [];
+    }
+  }
+
+  /**
+   * Get detailed column statistics for a single column in a database table.
+   * Same stats as getCacheColumnStats but queries the table directly.
+   */
+  async getTableColumnStats(
+    database: string,
+    schema: string,
+    tableName: string,
+    column: string
+  ): Promise<ColumnStats> {
+    await this.initialize();
+    if (!this.connection) {
+      throw new Error("DuckDB connection not available");
+    }
+
+    const qualifiedName = `"${database}"."${schema}"."${tableName}"`;
+    const escapedCol = `"${column}"`;
+
+    // Basic stats
+    const basicSql = `
+      SELECT 
+        COUNT(*) as total,
+        COUNT(${escapedCol}) as non_null,
+        COUNT(*) - COUNT(${escapedCol}) as null_count,
+        COUNT(DISTINCT ${escapedCol}) as unique_count,
+        MIN(${escapedCol})::VARCHAR as min_val,
+        MAX(${escapedCol})::VARCHAR as max_val
+      FROM ${qualifiedName}
+    `;
+
+    const basicReader = await this.connection.runAndReadAll(basicSql);
+    const basicRow = basicReader.getRowObjectsJS()[0] as Record<
+      string,
+      unknown
+    >;
+
+    // Detect column type
+    const typeCheckSql = `
+      SELECT 
+        CASE 
+          WHEN TRY_CAST(${escapedCol} AS BOOLEAN) IS NOT NULL 
+            AND ${escapedCol}::VARCHAR IN ('true', 'false', 'TRUE', 'FALSE', '1', '0') THEN 'boolean'
+          WHEN TRY_CAST(${escapedCol} AS DATE) IS NOT NULL 
+            OR TRY_CAST(${escapedCol} AS TIMESTAMP) IS NOT NULL THEN 'date'
+          WHEN TRY_CAST(${escapedCol} AS DOUBLE) IS NOT NULL THEN 'numeric'
+          ELSE 'string'
+        END as col_type
+      FROM ${qualifiedName} 
+      WHERE ${escapedCol} IS NOT NULL
+      LIMIT 1
+    `;
+    const typeCheckReader = await this.connection.runAndReadAll(typeCheckSql);
+    const typeCheckRows = typeCheckReader.getRowObjectsJS() as Record<
+      string,
+      unknown
+    >[];
+    const detectedType =
+      typeCheckRows.length > 0 ? String(typeCheckRows[0].col_type) : "string";
+
+    const isBoolean = detectedType === "boolean";
+    const isDate = detectedType === "date";
+    const isNumeric = detectedType === "numeric" && !isBoolean;
+
+    const stats: ColumnStats = {
+      column,
+      type: isDate ? "date" : isNumeric ? "numeric" : "string",
+      total: Number(basicRow.total) || 0,
+      nonNull: Number(basicRow.non_null) || 0,
+      nullCount: Number(basicRow.null_count) || 0,
+      unique: Number(basicRow.unique_count) || 0,
+      min: basicRow.min_val as string | null,
+      max: basicRow.max_val as string | null,
+    };
+
+    // Use a temp view so the shared stat helpers can reference it
+    const tempView = `__table_stats_${Date.now()}`;
+    await this.connection.run(
+      `CREATE OR REPLACE TEMP VIEW "${tempView}" AS SELECT * FROM ${qualifiedName}`
+    );
+
+    try {
+      if (isDate) {
+        await this.addTimeseriesStats(stats, tempView, escapedCol);
+      } else if (isNumeric) {
+        await this.addNumericStats(stats, tempView, escapedCol);
+      } else {
+        await this.addCategoricalStats(stats, tempView, escapedCol);
+      }
+    } finally {
+      this.connection.run(`DROP VIEW IF EXISTS "${tempView}"`).catch(() => {});
+    }
+
+    return stats;
+  }
+
+  /**
    * Close the database connection
    */
   async close(): Promise<void> {
@@ -1393,8 +1724,12 @@ export class DuckDBService {
 // ============================================================================
 
 /**
- * Split SQL into individual statements (best effort).
+ * Collect all cache IDs from a multi-statement result for cleanup.
  */
+export function collectCacheIds(result: MultiQueryResultWithPages): string[] {
+  return result.statements.map((s) => s.meta.cacheId).filter((id) => id);
+}
+
 /**
  * Format histogram bucket label from bin bounds
  */

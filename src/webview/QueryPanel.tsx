@@ -6,7 +6,7 @@ import type {
 } from './types';
 import { ResultsTable } from './ResultsTable';
 import { Toggle } from './ui/Toggle';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, ArrowLeft } from 'lucide-react';
 
 // Get VS Code API (exposed globally from index.tsx)
 function getVscodeApi() {
@@ -17,13 +17,14 @@ interface QueryPanelProps {
   result: MultiQueryResultWithPages;
   pageSize: number;
   maxCopyRows: number;
+  onBackToOverview?: () => void;
 }
 
 /**
  * QueryPanel - Top-level component for displaying query results
  * Handles the distinction between single and multi-statement results
  */
-export function QueryPanel({ result, pageSize, maxCopyRows }: QueryPanelProps) {
+export function QueryPanel({ result, pageSize, maxCopyRows, onBackToOverview }: QueryPanelProps) {
   // For multi-statement with more than one statement, render collapsible container
   if (result.statements.length > 1) {
     return (
@@ -43,15 +44,25 @@ export function QueryPanel({ result, pageSize, maxCopyRows }: QueryPanelProps) {
   }
   
   return (
-    <ResultsTable
-      meta={stmt.meta}
-      initialPage={stmt.page}
-      pageSize={pageSize}
-      maxCopyRows={maxCopyRows}
-      hasResults={stmt.meta.hasResults}
-      isCollapsible={false}
-      isExpanded={true}
-    />
+    <>
+      {onBackToOverview && (
+        <div className="back-to-overview">
+          <button className="btn btn-surface" onClick={onBackToOverview}>
+            <ArrowLeft size={13} />
+            Back to Overview
+          </button>
+        </div>
+      )}
+      <ResultsTable
+        meta={stmt.meta}
+        initialPage={stmt.page}
+        pageSize={pageSize}
+        maxCopyRows={maxCopyRows}
+        hasResults={stmt.meta.hasResults}
+        isCollapsible={false}
+        isExpanded={true}
+      />
+    </>
   );
 }
 

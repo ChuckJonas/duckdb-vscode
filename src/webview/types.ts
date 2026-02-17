@@ -62,6 +62,59 @@ export interface MultiQueryResultWithPages {
 }
 
 // ============================================================================
+// DATA OVERVIEW METADATA (for file and table overview)
+// ============================================================================
+
+/**
+ * Common metadata shared by both file and table overviews
+ */
+interface BaseOverviewMetadata {
+  displayName: string;
+  rowCount: number;
+  columns: { name: string; type: string }[];
+}
+
+/**
+ * Metadata for a data file (parquet, CSV, JSON, etc.)
+ */
+export interface FileSourceMetadata extends BaseOverviewMetadata {
+  sourceKind: "file";
+  fileType: string; // "parquet" | "csv" | "tsv" | "json" | "jsonl" | "ndjson"
+  fileSize: number; // bytes
+}
+
+/**
+ * Metadata for a database table or view
+ */
+export interface TableSourceMetadata extends BaseOverviewMetadata {
+  sourceKind: "table";
+  database: string;
+  schema: string;
+  tableName: string;
+  isView: boolean;
+}
+
+/**
+ * Discriminated union for all data overview sources
+ */
+export type DataOverviewMetadata = FileSourceMetadata | TableSourceMetadata;
+
+// ============================================================================
+// COLUMN SUMMARIES (from SUMMARIZE)
+// ============================================================================
+
+/**
+ * Per-column summary returned by DuckDB's SUMMARIZE command.
+ * Used by ColumnsPanel and FileOverview.
+ */
+export interface ColumnSummary {
+  name: string;
+  distinctCount: number;
+  nullPercent: number;
+  inferredType: string;
+}
+
+// ============================================================================
 // COLUMN STATS
 // ============================================================================
 

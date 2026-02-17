@@ -4,6 +4,30 @@ All notable changes to the "duckdb" extension will be documented in this file.
 
 Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how to structure this file.
 
+## [0.0.22] - 2026-02-17
+
+### Added
+- **Schema Overview**: data files and database tables/views now open to a landing page showing table metadata, column summaries (type, distinct count, null %), and a sample-data preview
+- **Table/View Explorer**: browse database tables and views via "Open Table" in the explorer — opens a virtual file with the same overview + results experience as data files
+- **Columns Panel**: fuzzy search across columns, expandable column details with type icons, copy column name, and click-to-filter
+- "View SQL" modal showing the generated query for any overview
+- `FileOverview` and `ColumnsPanel` components shared across data files and database tables
+
+### Changed
+- `DataFileEditorProvider` and new `TableEditorProvider` share common overview logic via `overviewHandler`
+
+## [0.0.21] - 2026-02-17
+
+### Added
+- **Resource management settings**: `duckdb.maxMemory` and `duckdb.tempDirectory` for controlling DuckDB memory and disk usage
+- **Inline loading indicator**: shows a spinner decoration on the executing statement while a query is running
+
+## [0.0.20] - 2026-02-17
+
+### Changed
+- DuckDB in-process memory now capped to fit within VS Code extension host limits (prevents out-of-memory crashes)
+- Updated marketplace keywords
+
 ## [0.0.19] - 2026-02-16
 
 ### Added
@@ -14,6 +38,20 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
   - `duckdb.fileViewer.csv` (default: on)
   - `duckdb.fileViewer.json` (default: off — plain `.json` is never auto-opened to avoid disrupting config files)
 - Full results experience for data files: pagination, sorting, filtering, column stats, export, and refresh all work the same as regular query results
+
+## [0.0.18] - 2026-02-15
+
+### Fixed
+- Column number formatting bug in filter popovers and histograms
+
+### Changed
+- Added proper type-checking (`tsc --noEmit`) to the build process
+- Updated README with new demo GIFs (live preview, Parquet querying)
+
+## [0.0.17] - 2026-02-14
+
+### Fixed
+- Peek view edge case bugs
 
 ## [0.0.16] - 2026-02-14
 

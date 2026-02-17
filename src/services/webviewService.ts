@@ -4,7 +4,11 @@
  */
 import * as vscode from "vscode";
 import * as path from "path";
-import { getDuckDBService, MultiQueryResultWithPages } from "./duckdb";
+import {
+  getDuckDBService,
+  collectCacheIds,
+  MultiQueryResultWithPages,
+} from "./duckdb";
 
 // Track result panels by source document
 interface PanelState {
@@ -32,7 +36,9 @@ let activeResultsQueries: string[] = [];
  * Returns undefined for non-file sourceIds (e.g., explorer-*, history-*)
  */
 function parseSourceUri(sourceId: string | undefined): vscode.Uri | undefined {
-  if (!sourceId) return undefined;
+  if (!sourceId) {
+    return undefined;
+  }
 
   // Only parse as URI if it looks like a file URI
   // Skip explorer-, history-, and other prefixed IDs
@@ -138,6 +144,10 @@ export function showResultsPanel(
   );
 }
 
+// ============================================================================
+// Results Panel Management
+// ============================================================================
+
 /**
  * Clean up all result panels and their caches
  * Should be called during extension deactivation
@@ -198,13 +208,6 @@ function buildPanelTitle(result: MultiQueryResultWithPages): string {
     statementsWithResults[statementsWithResults.length - 1];
   const displayRowCount = lastResultStmt?.meta.totalRows || 0;
   return `Results (${displayRowCount.toLocaleString()} rows)`;
-}
-
-/**
- * Collect all cache IDs from result statements for cleanup
- */
-function collectCacheIds(result: MultiQueryResultWithPages): string[] {
-  return result.statements.map((s) => s.meta.cacheId).filter((id) => id);
 }
 
 /**
@@ -777,7 +780,9 @@ function formatDataForEditor(
  * to prevent formula injection when opened in spreadsheet applications.
  */
 function formatCsvCell(val: unknown): string {
-  if (val === null || val === undefined) return "";
+  if (val === null || val === undefined) {
+    return "";
+  }
   let str = String(val);
   // Prevent formula injection in spreadsheet applications
   if (/^[=+\-@]/.test(str)) {

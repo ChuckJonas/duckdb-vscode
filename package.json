@@ -2,7 +2,7 @@
   "name": "duckdb",
   "displayName": "DuckDB",
   "description": "A DuckDB client for VS Code",
-  "version": "0.0.21",
+  "version": "0.0.22",
   "publisher": "chuckjonas",
   "icon": "resources/icon.png",
   "repository": {
@@ -99,6 +99,10 @@
         "command": "duckdb.explorer.refresh",
         "title": "Refresh",
         "icon": "$(refresh)"
+      },
+      {
+        "command": "duckdb.explorer.openOverview",
+        "title": "Open Overview"
       },
       {
         "command": "duckdb.explorer.selectTop100",
@@ -331,6 +335,11 @@
           "group": "0_new@1"
         },
         {
+          "command": "duckdb.explorer.openOverview",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^(table|view)$/",
+          "group": "1_query@0"
+        },
+        {
           "command": "duckdb.explorer.selectTop100",
           "when": "view == duckdb.databaseExplorer && viewItem =~ /^(table|view)$/",
           "group": "1_query@1"
@@ -444,6 +453,10 @@
         },
         {
           "command": "duckdb.explorer.refresh",
+          "when": "false"
+        },
+        {
+          "command": "duckdb.explorer.openOverview",
           "when": "false"
         },
         {
@@ -833,6 +846,16 @@
     },
     "customEditors": [
       {
+        "viewType": "duckdb.tableViewer",
+        "displayName": "DuckDB Table Viewer",
+        "selector": [
+          {
+            "filenamePattern": "*"
+          }
+        ],
+        "priority": "option"
+      },
+      {
         "viewType": "duckdb.dataFileViewer",
         "displayName": "DuckDB Data Viewer",
         "selector": [
@@ -892,6 +915,7 @@
   },
   "dependencies": {
     "@duckdb/node-api": "^1.4.3-r.3",
+    "fzf": "^0.5.2",
     "lucide-react": "^0.563.0",
     "react": "^19.2.3",
     "react-dom": "^19.2.3",

@@ -116,7 +116,14 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
     item.tooltip = this.getTooltip(element);
     item.description = this.getDescription(element);
 
-    // No auto-execute on click - use right-click menu instead
+    // Double-click tables/views to open the overview panel
+    if (element.type === "table" || element.type === "view") {
+      item.command = {
+        command: "duckdb.explorer.openOverview",
+        title: "Open Overview",
+        arguments: [element],
+      };
+    }
 
     return item;
   }

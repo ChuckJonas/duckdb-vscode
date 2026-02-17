@@ -2,9 +2,10 @@ import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react'
 import type { ColumnStats, StatementCacheMeta, PageData } from './types';
 import { ColumnsPanel } from './ColumnsPanel';
 import { Modal } from './ui/Modal';
+import { SqlModal } from './ui/SqlModal';
 import { JsonSyntaxHighlight } from './ui/JsonHighlight';
 import { CellValue } from './ui/CellValue';
-import { SqlSyntaxHighlight, SqlPreview } from './ui/SqlHighlight';
+import { SqlPreview } from './ui/SqlHighlight';
 import { 
   FilterBar, 
   FilterState, 
@@ -1138,33 +1139,4 @@ function CellExpansionModal({ value, column, onClose, onCopy }: CellExpansionMod
   );
 }
 
-// SQL Modal
-interface SqlModalProps {
-  sql: string;
-  onClose: () => void;
-  onCopy: (text: string) => void;
-  onGoToSource?: () => void;
-  title?: string;
-}
-
-function SqlModal({ sql, onClose, onCopy, onGoToSource, title = "SQL" }: SqlModalProps) {
-  const actions = onGoToSource ? [
-    { icon: <ExternalLink size={14} />, label: 'Go to Source File', onClick: onGoToSource },
-  ] : undefined;
-
-  return (
-    <Modal
-      title={title}
-      onClose={onClose}
-      onCopy={() => onCopy(sql)}
-      size={`${sql.length.toLocaleString()} chars`}
-      className="sql-modal"
-      actions={actions}
-    >
-      <pre className="modal-content modal-sql">
-        <SqlSyntaxHighlight sql={sql} />
-      </pre>
-    </Modal>
-  );
-}
 

@@ -10,12 +10,12 @@
  */
 import * as vscode from "vscode";
 import * as path from "path";
+import { getDuckDBService } from "../services/duckdb";
 import {
-  getDuckDBService,
-  buildQueryFileSql,
-  type MultiQueryResultWithPages,
-} from "../services/duckdb";
-import { handleExport } from "../services/webviewService";
+  setupOverviewWebview,
+  type OverviewDataSource,
+  type DataOverviewMetadata,
+} from "./overviewHandler";
 
 class DataFileDocument implements vscode.CustomDocument {
   constructor(public readonly uri: vscode.Uri) {}
@@ -37,221 +37,65 @@ export class DataFileEditorProvider
     document: DataFileDocument,
     webviewPanel: vscode.WebviewPanel
   ): Promise<void> {
-    webviewPanel.webview.options = {
-      enableScripts: true,
-      localResourceRoots: [
-        vscode.Uri.joinPath(this.context.extensionUri, "out", "webview"),
-      ],
-    };
-
-    webviewPanel.iconPath = vscode.Uri.joinPath(
-      this.context.extensionUri,
-      "resources",
-      "duckdb-icon.svg"
-    );
-
     const filePath = this.getDisplayPath(document.uri);
-    const sql = buildQueryFileSql(filePath);
-    const config = vscode.workspace.getConfiguration("duckdb");
-    const pageSize = config.get<number>("pageSize", 1000);
-    const maxCopyRows = config.get<number>("maxCopyRows", 50000);
     const db = getDuckDBService();
 
-    let cacheIds: string[] = [];
-    let sortColumn: string | undefined;
-    let sortDirection: "asc" | "desc" | undefined;
+    // Detect file type from extension
+    const ext = path
+      .extname(document.uri.fsPath)
+      .toLowerCase()
+      .replace(".", "");
+    const fileTypeMap: Record<string, string> = {
+      parquet: "parquet",
+      csv: "csv",
+      tsv: "tsv",
+      json: "json",
+      jsonl: "jsonl",
+      ndjson: "ndjson",
+    };
+    const fileType = fileTypeMap[ext] || ext;
+    const fileName = path.basename(document.uri.fsPath);
+    const documentUri = document.uri;
 
-    const scriptUri = webviewPanel.webview.asWebviewUri(
-      vscode.Uri.joinPath(
-        this.context.extensionUri,
-        "out",
-        "webview",
-        "results.js"
-      )
-    );
-    webviewPanel.webview.html = getWebviewHtml(scriptUri);
+    const source: OverviewDataSource = {
+      async getMetadata(): Promise<DataOverviewMetadata> {
+        const [metadata, stat] = await Promise.all([
+          db.getFileMetadata(filePath),
+          vscode.workspace.fs.stat(documentUri),
+        ]);
+        return {
+          sourceKind: "file",
+          displayName: fileName,
+          fileType,
+          fileSize: stat.size,
+          rowCount: metadata.rowCount,
+          columns: metadata.columns,
+        };
+      },
 
-    // Clean up DuckDB caches when the editor is closed
-    webviewPanel.onDidDispose(() => {
-      for (const id of cacheIds) {
-        db.dropCache(id).catch(() => {});
-      }
-    });
+      async getSummaries() {
+        return db.getFileSummaries(filePath);
+      },
 
-    webviewPanel.webview.onDidReceiveMessage(async (message) => {
-      switch (message.type) {
-        case "ready":
-          try {
-            const result = await db.executeQuery(sql, pageSize);
-            cacheIds = collectCacheIds(result);
-            webviewPanel.webview.postMessage({
-              type: "queryResult",
-              data: result,
-              pageSize,
-              maxCopyRows,
-            });
-          } catch (error) {
-            webviewPanel.webview.postMessage({
-              type: "queryError",
-              error: String(error),
-            });
-          }
-          break;
+      async getColumnStats(column: string) {
+        return db.getFileColumnStats(filePath, column);
+      },
 
-        case "requestPage":
-          try {
-            const pageData = await db.fetchPage(
-              message.cacheId,
-              message.offset,
-              pageSize,
-              message.sortColumn,
-              message.sortDirection,
-              message.whereClause
-            );
-            sortColumn = message.sortColumn;
-            sortDirection = message.sortDirection;
-            webviewPanel.webview.postMessage({
-              type: "pageData",
-              data: pageData,
-            });
-          } catch (error) {
-            webviewPanel.webview.postMessage({
-              type: "filterError",
-              cacheId: message.cacheId,
-              error: String(error),
-            });
-          }
-          break;
+      buildSelectSql(columns?: string[], limit?: number): string {
+        const escaped = filePath.replace(/'/g, "''");
+        const colList =
+          columns && columns.length > 0
+            ? columns.map((c) => `"${c}"`).join(", ")
+            : "*";
+        let sql = `SELECT ${colList} FROM '${escaped}'`;
+        if (limit) {
+          sql += ` LIMIT ${limit}`;
+        }
+        return sql;
+      },
+    };
 
-        case "requestColumnStats":
-          try {
-            const stats = await db.getCacheColumnStats(
-              message.cacheId,
-              message.column,
-              message.whereClause
-            );
-            webviewPanel.webview.postMessage({
-              type: "columnStats",
-              cacheId: message.cacheId,
-              data: stats,
-            });
-          } catch (error) {
-            webviewPanel.webview.postMessage({
-              type: "columnStats",
-              cacheId: message.cacheId,
-              column: message.column,
-              data: null,
-              error: String(error),
-            });
-          }
-          break;
-
-        case "requestColumnSummaries":
-          try {
-            const summaries = await db.getCacheColumnSummaries(message.cacheId);
-            webviewPanel.webview.postMessage({
-              type: "columnSummaries",
-              cacheId: message.cacheId,
-              data: summaries,
-            });
-          } catch (error) {
-            webviewPanel.webview.postMessage({
-              type: "columnSummaries",
-              cacheId: message.cacheId,
-              data: [],
-              error: String(error),
-            });
-          }
-          break;
-
-        case "requestDistinctValues":
-          try {
-            const [distinctValues, cardinality] = await Promise.all([
-              db.getColumnDistinctValues(
-                message.cacheId,
-                message.column,
-                100,
-                message.searchTerm
-              ),
-              db.getColumnCardinality(message.cacheId, message.column),
-            ]);
-            webviewPanel.webview.postMessage({
-              type: "distinctValues",
-              cacheId: message.cacheId,
-              column: message.column,
-              data: distinctValues,
-              cardinality,
-            });
-          } catch (error) {
-            webviewPanel.webview.postMessage({
-              type: "distinctValues",
-              cacheId: message.cacheId,
-              column: message.column,
-              data: [],
-              cardinality: 0,
-            });
-          }
-          break;
-
-        case "export":
-          await handleExport(
-            db,
-            message.cacheId,
-            message.format,
-            maxCopyRows,
-            sortColumn,
-            sortDirection
-          );
-          break;
-
-        case "requestCopyData":
-          try {
-            const { columns, rows } = await db.getCopyData(
-              message.cacheId,
-              maxCopyRows,
-              sortColumn,
-              sortDirection
-            );
-            webviewPanel.webview.postMessage({
-              type: "copyData",
-              data: { columns, rows, maxCopyRows },
-            });
-          } catch (error) {
-            webviewPanel.webview.postMessage({
-              type: "copyData",
-              error: String(error),
-            });
-          }
-          break;
-
-        case "refreshQuery":
-          try {
-            for (const id of cacheIds) {
-              db.dropCache(id).catch(() => {});
-            }
-            const result = await db.executeQuery(sql, pageSize);
-            cacheIds = collectCacheIds(result);
-            sortColumn = undefined;
-            sortDirection = undefined;
-            webviewPanel.webview.postMessage({
-              type: "queryResult",
-              data: result,
-              pageSize,
-              maxCopyRows,
-            });
-          } catch (error) {
-            webviewPanel.webview.postMessage({
-              type: "refreshError",
-              error: String(error),
-            });
-          }
-          break;
-
-        case "goToSource":
-          // For data files, "go to source" opens the file with default text editor
-          break;
-      }
-    });
+    setupOverviewWebview(webviewPanel, this.context, source);
   }
 
   private getDisplayPath(uri: vscode.Uri): string {
@@ -262,26 +106,6 @@ export class DataFileEditorProvider
     }
     return filePath;
   }
-}
-
-function collectCacheIds(result: MultiQueryResultWithPages): string[] {
-  return result.statements.map((s) => s.meta.cacheId).filter((id) => id);
-}
-
-function getWebviewHtml(scriptUri: vscode.Uri): string {
-  return `<!DOCTYPE html>
-<html lang="en">
-<head>
-  <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; script-src ${scriptUri.scheme}:;">
-  <title>DuckDB Data Viewer</title>
-</head>
-<body>
-  <div id="root"></div>
-  <script src="${scriptUri}"></script>
-</body>
-</html>`;
 }
 
 // ============================================================================
