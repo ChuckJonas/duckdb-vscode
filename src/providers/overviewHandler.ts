@@ -7,6 +7,7 @@
  * each provider only needs to supply a thin DataSource adapter.
  */
 import * as vscode from "vscode";
+import * as path from "path";
 import {
   getDuckDBService,
   collectCacheIds,
@@ -217,6 +218,63 @@ export function setupOverviewWebview(
           });
         }
         break;
+
+      case "exportOverview": {
+        const format: "csv" | "parquet" | "json" | "jsonl" = message.format;
+        const selectSql = source.buildSelectSql(message.columns);
+
+        const extensions: Record<string, { ext: string; name: string }> = {
+          csv: { ext: "csv", name: "CSV Files" },
+          parquet: { ext: "parquet", name: "Parquet Files" },
+          json: { ext: "json", name: "JSON Files" },
+          jsonl: { ext: "jsonl", name: "JSONL Files" },
+        };
+        const { ext, name } = extensions[format];
+
+        const uri = await vscode.window.showSaveDialog({
+          defaultUri: vscode.Uri.file(
+            path.join(
+              vscode.workspace.workspaceFolders?.[0]?.uri.fsPath ||
+                process.cwd(),
+              `export.${ext}`
+            )
+          ),
+          filters: { [name]: [ext] },
+          title: `Export as ${format.toUpperCase()}`,
+        });
+
+        if (!uri) {
+          break;
+        }
+
+        try {
+          let copyOptions: string;
+          switch (format) {
+            case "csv":
+              copyOptions = "FORMAT CSV, HEADER";
+              break;
+            case "parquet":
+              copyOptions = "FORMAT PARQUET";
+              break;
+            case "json":
+              copyOptions = "FORMAT JSON, ARRAY true";
+              break;
+            case "jsonl":
+              copyOptions = "FORMAT JSON, ARRAY false";
+              break;
+          }
+
+          const filePath = uri.fsPath.replace(/'/g, "''");
+          const copySql = `COPY (${selectSql}) TO '${filePath}' (${copyOptions})`;
+          await db.run(copySql);
+          vscode.window.showInformationMessage(
+            `Exported to ${path.basename(uri.fsPath)}`
+          );
+        } catch (error) {
+          vscode.window.showErrorMessage(`Export failed: ${error}`);
+        }
+        break;
+      }
 
       case "refreshQuery":
         try {

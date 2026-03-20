@@ -5,7 +5,7 @@ import { formatCount } from './utils/format';
 import {
   ChevronDown, ChevronRight, Play, FileText,
   CheckSquare, Square, Minus,
-  Search, X, Database, Eye, Tag,
+  Search, X, Database, Eye, Tag, Download,
 } from 'lucide-react';
 import { Modal } from './ui/Modal';
 import { SqlPreview } from './ui/SqlHighlight';
@@ -14,6 +14,8 @@ import { FuzzyHighlight, EMPTY_POSITIONS } from './ui/FuzzyHighlight';
 import { CopyButton } from './ui/CopyButton';
 import { ColumnDetails } from './ui/ColumnDetails';
 import { Toggle } from './ui/Toggle';
+import { PopoverMenu } from './ui/PopoverMenu';
+import { IconButton } from './ui/IconButton';
 import { getTypeIcon } from './utils/typeIcons';
 import './styles.css';
 
@@ -241,6 +243,15 @@ export function FileOverview({ metadata }: FileOverviewProps) {
     });
   }, [selectedColumnNames]);
 
+  const handleExportOverview = useCallback((format: 'csv' | 'parquet' | 'json' | 'jsonl') => {
+    const vscode = getVscodeApi();
+    vscode.postMessage({
+      type: 'exportOverview',
+      columns: selectedColumnNames,
+      format,
+    });
+  }, [selectedColumnNames]);
+
   const handleCopySql = useCallback((text: string) => {
     navigator.clipboard.writeText(text);
   }, []);
@@ -418,6 +429,18 @@ export function FileOverview({ metadata }: FileOverviewProps) {
               </button>
             )}
           </div>
+
+          {/* Export / Download */}
+          <PopoverMenu trigger={
+            <IconButton icon={<Download size={14} />} tooltip="Download as file">
+              <ChevronDown size={12} />
+            </IconButton>
+          }>
+            <button onClick={() => handleExportOverview('csv')}>CSV</button>
+            <button onClick={() => handleExportOverview('parquet')}>Parquet</button>
+            <button onClick={() => handleExportOverview('json')}>JSON</button>
+            <button onClick={() => handleExportOverview('jsonl')}>JSONL</button>
+          </PopoverMenu>
         </div>
 
       </div>
