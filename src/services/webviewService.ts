@@ -405,6 +405,17 @@ function setupMessageHandler(
           await handleRefreshQuery(panel, sourceId, pageSize, maxCopyRows, db);
           break;
 
+        case "runAdHoc":
+          await handleRunAdHoc(
+            panel,
+            sourceId,
+            message.sql,
+            pageSize,
+            maxCopyRows,
+            db
+          );
+          break;
+
         case "goToSource":
           await vscode.commands.executeCommand("duckdb.results.goToSource");
           break;
@@ -443,6 +454,7 @@ async function handleRequestPage(
     sortColumn?: string;
     sortDirection?: "asc" | "desc";
     whereClause?: string;
+    requestVersion?: number;
   },
   currentState: PanelState | null,
   pageSize: number,
@@ -469,6 +481,7 @@ async function handleRequestPage(
     panel.webview.postMessage({
       type: "pageData",
       data: pageData,
+      requestVersion: message.requestVersion,
     });
   } catch (error) {
     console.error("🦆 Failed to fetch page:", error);
@@ -476,6 +489,7 @@ async function handleRequestPage(
     panel.webview.postMessage({
       type: "filterError",
       cacheId,
+      requestVersion: message.requestVersion,
       error: String(error),
     });
   }
@@ -686,6 +700,56 @@ async function handleRefreshQuery(
     });
   } catch (error) {
     console.error("🦆 Failed to refresh query:", error);
+    panel.webview.postMessage({
+      type: "refreshError",
+      error: String(error),
+    });
+  }
+}
+
+/**
+ * Handle 'runAdHoc' message - execute SQL edited in the SQL modal,
+ * replacing the current results in this panel. The new SQL becomes
+ * the panel's stored query, so subsequent refreshes re-run it.
+ */
+async function handleRunAdHoc(
+  panel: vscode.WebviewPanel,
+  sourceId: string | undefined,
+  sql: unknown,
+  pageSize: number,
+  maxCopyRows: number,
+  db: ReturnType<typeof getDuckDBService>
+): Promise<void> {
+  if (typeof sql !== "string" || !sql.trim()) return;
+
+  const currentState = sourceId ? resultPanels.get(sourceId) ?? null : null;
+
+  try {
+    if (currentState) {
+      for (const cacheId of currentState.cacheIds) {
+        db.dropCache(cacheId).catch(() => {});
+      }
+    }
+
+    const result = await db.executeQuery(sql, pageSize);
+
+    if (currentState) {
+      const newCacheIds = collectCacheIds(result);
+      currentState.cacheIds = newCacheIds;
+      currentState.currentResult = result;
+      currentState.sortColumn = undefined;
+      currentState.sortDirection = undefined;
+      currentState.queries = result.statements.map((s) => s.meta.sql);
+      panel.title = buildPanelTitle(result);
+    }
+
+    panel.webview.postMessage({
+      type: "queryResult",
+      data: result,
+      pageSize,
+      maxCopyRows,
+    });
+  } catch (error) {
     panel.webview.postMessage({
       type: "refreshError",
       error: String(error),

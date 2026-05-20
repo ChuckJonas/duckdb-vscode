@@ -2,7 +2,7 @@
   "name": "duckdb",
   "displayName": "DuckDB",
   "description": "A DuckDB client for VS Code — query CSV, Parquet, JSON, and Excel files directly",
-  "version": "0.0.25",
+  "version": "0.0.26",
   "publisher": "chuckjonas",
   "icon": "resources/icon.png",
   "repository": {
@@ -706,10 +706,10 @@
         },
         "duckdb.pageSize": {
           "type": "number",
-          "default": 1000,
-          "minimum": 100,
+          "default": 100,
+          "minimum": 10,
           "maximum": 10000,
-          "description": "Number of rows per page in results table"
+          "description": "Rows fetched per chunk when the results table loads more rows during infinite scroll."
         },
         "duckdb.maxCopyRows": {
           "type": "number",
@@ -843,6 +843,26 @@
           "default": true,
           "markdownDescription": "Automatically open `.parquet` files with the DuckDB data viewer, replacing the default binary file error."
         },
+        "duckdb.fileViewer.openMode": {
+          "type": "string",
+          "enum": [
+            "data",
+            "schema"
+          ],
+          "default": "schema",
+          "enumDescriptions": [
+            "Immediately load the first N rows of data (use the schema overview via the Back button)",
+            "Show the schema/column overview first; user picks what to query"
+          ],
+          "markdownDescription": "Default landing view when opening a data file (parquet, CSV, JSON, etc.).\n\n- `schema` (default): shows column metadata first — safe for large files.\n- `data`: jumps straight into rows (full result materialized into a temp table) — see [`#duckdb.fileViewer.openRowLimit#`](command:workbench.action.openSettings?%22duckdb.fileViewer.openRowLimit%22) for an optional cap."
+        },
+        "duckdb.fileViewer.openRowLimit": {
+          "type": "number",
+          "default": 0,
+          "minimum": 0,
+          "maximum": 100000000,
+          "markdownDescription": "Optional cap on rows materialized when [`#duckdb.fileViewer.openMode#`](command:workbench.action.openSettings?%22duckdb.fileViewer.openMode%22) is `data`.\n\n- `0` (default) — no cap; the full result set is loaded into a DuckDB temp table and rows are streamed into the table on demand via infinite scroll.\n- `> 0` — applies `LIMIT N` to the auto-open query. Useful for huge files where you only want a sample."
+        },
         "duckdb.fileViewer.csv": {
           "type": "boolean",
           "default": true,
@@ -933,7 +953,7 @@
     "typescript-eslint": "^8.52.0"
   },
   "dependencies": {
-    "@duckdb/node-api": "^1.4.3-r.3",
+    "@duckdb/node-api": "^1.5.2-r.1",
     "fzf": "^0.5.2",
     "lucide-react": "^0.563.0",
     "react": "^19.2.3",

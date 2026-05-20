@@ -25,6 +25,13 @@ export type { DataOverviewMetadata, ContainerOverviewMetadata };
 // DataSource interface
 // ============================================================================
 
+/** Persistent target for in-place edits. Returned by sources that can be
+ * safely overwritten via DuckDB's COPY (parquet, csv, tsv, json, jsonl). */
+export interface WriteBackTarget {
+  path: string;
+  format: "parquet" | "csv" | "tsv" | "json" | "jsonl" | "ndjson";
+}
+
 /**
  * Abstraction over the data source (file or table).
  * Each provider implements this to plug into the shared handler.
@@ -48,11 +55,32 @@ export interface OverviewDataSource {
 
   /** Build a SELECT SQL with optional column selection and limit. */
   buildSelectSql(columns?: string[], limit?: number): string;
+
+  /**
+   * Where (and in what format) cell edits get persisted. Returning null
+   * disables editing for this source (e.g. xlsx, virtual tables, derived
+   * results that can't be safely overwritten).
+   */
+  getWriteBackTarget?(): WriteBackTarget | null;
 }
 
 // ============================================================================
 // Shared webview setup
 // ============================================================================
+
+/** Options that customize the initial webview behaviour. */
+export interface OverviewWebviewOptions {
+  /**
+   * If present, the panel auto-runs `SELECT * FROM <source>` after sending
+   * metadata, landing the user directly on the results view instead of the
+   * schema overview.
+   *
+   * - `limit` undefined or `0` → no LIMIT; the full result set is materialized
+   *   into the temp cache and rows stream into the table via infinite scroll.
+   * - `limit` > 0 → applies `LIMIT N`, useful for sampling huge files.
+   */
+  autoLoad?: { limit?: number };
+}
 
 /**
  * Configure a webview panel for the overview UI and wire up all message
@@ -61,17 +89,30 @@ export interface OverviewDataSource {
 export function setupOverviewWebview(
   panel: vscode.WebviewPanel,
   context: vscode.ExtensionContext,
-  source: OverviewDataSource
+  source: OverviewDataSource,
+  options: OverviewWebviewOptions = {}
 ): void {
   const config = vscode.workspace.getConfiguration("duckdb");
-  const pageSize = config.get<number>("pageSize", 1000);
+  const pageSize = config.get<number>("pageSize", 100);
   const maxCopyRows = config.get<number>("maxCopyRows", 50000);
   const db = getDuckDBService();
+  const autoLoad = options.autoLoad;
 
   // Mutable state shared across message handlers
   let cacheIds: string[] = [];
   let sortColumn: string | undefined;
   let sortDirection: "asc" | "desc" | undefined;
+  // The most recently executed query (default top-N, queryFile, or runAdHoc).
+  // Used so "refresh" re-runs the last query rather than dropping back to
+  // the schema overview.
+  let lastQuerySql: string | undefined;
+  /**
+   * Whether the current cache reflects the *full, unmodified* source — only
+   * then is it safe to write cell edits back to the source file. Set true
+   * when the auto-load runs `SELECT *` with no LIMIT; false for column
+   * projections, LIMITed samples, and ad-hoc SQL.
+   */
+  let cacheIsFullSource = false;
 
   // Set up webview options and content
   panel.webview.options = {
@@ -109,15 +150,53 @@ export function setupOverviewWebview(
   // ------------------------------------------------------------------
   // Helper to send metadata to the webview
   // ------------------------------------------------------------------
-  async function sendMetadata(): Promise<void> {
+  async function sendMetadata(opts: { silent?: boolean } = {}): Promise<void> {
     try {
-      sendLoadingStatus("Fetching schema…");
+      if (!opts.silent) sendLoadingStatus("Fetching schema…");
       const metadata = await source.getMetadata();
       panel.webview.postMessage({
         type: "fileMetadata",
         data: metadata,
         pageSize,
         maxCopyRows,
+        // When silent, the webview stores metadata in state but does not
+        // switch the visible view — used so the "Back to Overview" button
+        // works while the user lands directly on the data results.
+        silent: opts.silent ?? false,
+      });
+    } catch (error) {
+      panel.webview.postMessage({
+        type: "queryError",
+        error: String(error),
+      });
+    }
+  }
+
+  // ------------------------------------------------------------------
+  // Run an arbitrary SQL, post results, and remember it for refresh.
+  // `editable` controls whether cell edits get persisted back to the
+  // source — only true for unbounded SELECT * loads where the cache
+  // is a faithful copy of the source.
+  // ------------------------------------------------------------------
+  async function runQuery(
+    querySql: string,
+    status: string,
+    opts: { editable?: boolean } = {}
+  ): Promise<void> {
+    try {
+      sendLoadingStatus(status);
+      resetCaches();
+      lastQuerySql = querySql;
+      cacheIsFullSource = !!opts.editable;
+      const result = await db.executeQuery(querySql, pageSize);
+      cacheIds = collectCacheIds(result);
+      const writeTarget = source.getWriteBackTarget?.() ?? null;
+      panel.webview.postMessage({
+        type: "queryResult",
+        data: result,
+        pageSize,
+        maxCopyRows,
+        editable: cacheIsFullSource && writeTarget !== null,
       });
     } catch (error) {
       panel.webview.postMessage({
@@ -147,36 +226,38 @@ export function setupOverviewWebview(
       // ---- Overview-specific (delegated to DataSource) ----
 
       case "ready":
-        await sendMetadata();
+        if (autoLoad) {
+          // Pre-fetch metadata silently so the Back-to-Overview button works,
+          // then jump straight into the data view.
+          await sendMetadata({ silent: true });
+          const limit =
+            autoLoad.limit && autoLoad.limit > 0 ? autoLoad.limit : undefined;
+          const status = limit
+            ? `Loading first ${limit.toLocaleString()} rows…`
+            : "Materializing results…";
+          // Editable only when the cache is the full unbounded source.
+          await runQuery(source.buildSelectSql(undefined, limit), status, {
+            editable: !limit,
+          });
+        } else {
+          await sendMetadata();
+        }
         break;
 
       case "queryFile": {
-        try {
-          sendLoadingStatus("Running query…");
-          resetCaches();
-          const querySql = source.buildSelectSql(
-            message.columns,
-            message.limit
-          );
-          const result = await db.executeQuery(querySql, pageSize);
-          cacheIds = collectCacheIds(result);
-          panel.webview.postMessage({
-            type: "queryResult",
-            data: result,
-            pageSize,
-            maxCopyRows,
-          });
-        } catch (error) {
-          panel.webview.postMessage({
-            type: "queryError",
-            error: String(error),
-          });
-        }
+        const querySql = source.buildSelectSql(message.columns, message.limit);
+        // Editable only when the user picks "All rows" with no projection.
+        const editable =
+          (!message.columns || message.columns.length === 0) && !message.limit;
+        await runQuery(querySql, "Running query…", { editable });
         break;
       }
 
       case "openAsSql": {
-        const sql = source.buildSelectSql(message.columns);
+        const sql =
+          typeof message.sql === "string" && message.sql.trim().length > 0
+            ? message.sql
+            : source.buildSelectSql(message.columns);
         const doc = await vscode.workspace.openTextDocument({
           content: sql,
           language: "sql",
@@ -184,6 +265,53 @@ export function setupOverviewWebview(
         await vscode.window.showTextDocument(doc, {
           viewColumn: vscode.ViewColumn.Beside,
         });
+        break;
+      }
+
+      case "runAdHoc": {
+        if (typeof message.sql !== "string" || !message.sql.trim()) break;
+        // Ad-hoc edits produce a derived result; never safe to write back.
+        await runQuery(message.sql, "Running query…", { editable: false });
+        break;
+      }
+
+      case "updateCell": {
+        const { rowId, column, columnType, newValue } = message;
+        const target = source.getWriteBackTarget?.() ?? null;
+        try {
+          if (!cacheIsFullSource) {
+            throw new Error(
+              "Editing is disabled for derived or limited results. Reload the file with the default view to edit."
+            );
+          }
+          if (!target) {
+            throw new Error("This file format does not support write-back.");
+          }
+          if (cacheIds.length === 0) throw new Error("No cache to edit");
+          const cacheId = cacheIds[0];
+          const stored = await db.updateCacheCell(
+            cacheId,
+            Number(rowId),
+            column,
+            columnType,
+            newValue ?? null
+          );
+          await db.writeCacheToFile(cacheId, target.path, target.format);
+          panel.webview.postMessage({
+            type: "cellUpdated",
+            cacheId,
+            rowId,
+            column,
+            newValue: stored,
+          });
+        } catch (error) {
+          panel.webview.postMessage({
+            type: "cellUpdated",
+            rowId,
+            column,
+            error: String(error instanceof Error ? error.message : error),
+          });
+        }
         break;
       }
 
@@ -223,14 +351,24 @@ export function setupOverviewWebview(
 
       case "refreshQuery":
         try {
-          resetCaches();
-          await sendMetadata();
+          if (lastQuerySql) {
+            await runQuery(lastQuerySql, "Refreshing…");
+          } else {
+            resetCaches();
+            await sendMetadata();
+          }
         } catch (error) {
           panel.webview.postMessage({
             type: "refreshError",
             error: String(error),
           });
         }
+        break;
+
+      // ---- Navigate to schema overview from results view ----
+
+      case "showOverview":
+        await sendMetadata();
         break;
 
       // ---- Cache-based handlers (identical for all sources) ----
@@ -250,11 +388,13 @@ export function setupOverviewWebview(
           panel.webview.postMessage({
             type: "pageData",
             data: pageData,
+            requestVersion: message.requestVersion,
           });
         } catch (error) {
           panel.webview.postMessage({
             type: "filterError",
             cacheId: message.cacheId,
+            requestVersion: message.requestVersion,
             error: String(error),
           });
         }
@@ -524,6 +664,8 @@ export function setupMultiTableOverviewWebview(
             data: result,
             pageSize,
             maxCopyRows,
+            // Multi-table sources (xlsx) never support write-back.
+            editable: false,
           });
         } catch (error) {
           panel.webview.postMessage({
@@ -535,8 +677,11 @@ export function setupMultiTableOverviewWebview(
       }
 
       case "openAsSql": {
-        if (!activeSource) break;
-        const sql = activeSource.buildSelectSql(message.columns);
+        const sql =
+          typeof message.sql === "string" && message.sql.trim().length > 0
+            ? message.sql
+            : activeSource?.buildSelectSql(message.columns);
+        if (!sql) break;
         const doc = await vscode.workspace.openTextDocument({
           content: sql,
           language: "sql",
@@ -544,6 +689,30 @@ export function setupMultiTableOverviewWebview(
         await vscode.window.showTextDocument(doc, {
           viewColumn: vscode.ViewColumn.Beside,
         });
+        break;
+      }
+
+      case "runAdHoc": {
+        try {
+          if (typeof message.sql !== "string" || !message.sql.trim()) break;
+          sendLoadingStatus("Running query…");
+          resetCaches();
+          const result = await db.executeQuery(message.sql, pageSize);
+          cacheIds = collectCacheIds(result);
+          panel.webview.postMessage({
+            type: "queryResult",
+            data: result,
+            pageSize,
+            maxCopyRows,
+            // Multi-table sources (xlsx) never support write-back.
+            editable: false,
+          });
+        } catch (error) {
+          panel.webview.postMessage({
+            type: "queryError",
+            error: String(error),
+          });
+        }
         break;
       }
 
@@ -616,11 +785,13 @@ export function setupMultiTableOverviewWebview(
           panel.webview.postMessage({
             type: "pageData",
             data: pageData,
+            requestVersion: message.requestVersion,
           });
         } catch (error) {
           panel.webview.postMessage({
             type: "filterError",
             cacheId: message.cacheId,
+            requestVersion: message.requestVersion,
             error: String(error),
           });
         }

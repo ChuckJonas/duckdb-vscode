@@ -927,6 +927,53 @@ td {
   cursor: cell;
 }
 
+/* Virtualized scroll spacers and skeleton cells.
+ *
+ * Spacer rows reserve the height of un-rendered rows above and below the
+ * visible window so the scrollbar maps to the full result set. They must
+ * not have padding/border or hover styling — they are layout only.
+ */
+.virt-spacer {
+  pointer-events: none;
+}
+
+.virt-spacer td {
+  padding: 0;
+  border: none;
+  background: transparent;
+  cursor: default;
+}
+
+.virt-row {
+  contain: layout;
+}
+
+.virt-row-loading td.cell-loading {
+  cursor: default;
+  opacity: 0.6;
+}
+
+.cell-skeleton {
+  display: inline-block;
+  width: 60%;
+  height: 0.7em;
+  vertical-align: middle;
+  background: linear-gradient(
+    90deg,
+    var(--bg-hover) 0%,
+    var(--bg-surface) 50%,
+    var(--bg-hover) 100%
+  );
+  background-size: 200% 100%;
+  animation: cell-skeleton-shimmer 1.2s ease-in-out infinite;
+  border-radius: 2px;
+}
+
+@keyframes cell-skeleton-shimmer {
+  0% { background-position: 100% 0; }
+  100% { background-position: -100% 0; }
+}
+
 tr:hover td:not(.row-number) {
   background: var(--bg-hover);
 }
@@ -964,12 +1011,9 @@ tr:hover td:not(.row-number) {
   font-size: var(--font-size-sm);
 }
 
-/* Row Numbers */
+/* Row Numbers — width is set inline so the column is resizable. */
 .row-number-header,
 .row-number {
-  width: 50px;
-  min-width: 50px;
-  max-width: 50px;
   text-align: right;
   color: var(--text-muted);
   font-size: var(--font-size-sm);
@@ -977,6 +1021,18 @@ tr:hover td:not(.row-number) {
   user-select: none;
   background: var(--bg-secondary);
   border-right: 1px solid var(--border);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.row-number-header {
+  position: relative;
+}
+
+.row-number-header .resize-handle {
+  /* Same affordance as data-column resize handles. */
+  cursor: col-resize;
 }
 
 .row-number {
@@ -1250,6 +1306,84 @@ tr.row-selected td.row-number {
   white-space: pre-wrap;
   word-break: break-word;
   margin: 0;
+}
+
+/* Editable cell textarea (cell expansion modal in edit mode) */
+.modal-cell-editor {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-base);
+  line-height: 1.6;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: var(--space-md);
+  width: 100%;
+  outline: none;
+  resize: vertical;
+  min-height: 80px;
+}
+
+.modal-cell-editor:focus {
+  border-color: var(--accent-blue);
+}
+
+.modal-cell-editor:disabled {
+  opacity: 0.6;
+  cursor: progress;
+}
+
+.cell-modal-error {
+  display: flex;
+  align-items: flex-start;
+  gap: var(--space-sm);
+  padding: var(--space-sm) var(--space-lg);
+  background: rgba(243, 139, 168, 0.08);
+  border-top: 1px solid var(--accent-red);
+  color: var(--accent-red);
+  font-size: var(--font-size-sm);
+  line-height: 1.4;
+}
+
+.cell-modal-error-icon {
+  flex-shrink: 0;
+}
+
+.cell-modal-spinner {
+  display: inline-block;
+  width: 12px;
+  height: 12px;
+  border: 1.5px solid var(--text-muted);
+  border-top-color: var(--accent-blue);
+  border-radius: 50%;
+  animation: cell-modal-spin 0.7s linear infinite;
+}
+
+@keyframes cell-modal-spin {
+  to { transform: rotate(360deg); }
+}
+
+/* Editable SQL textarea — inherits modal-content sizing */
+.modal-sql-editor {
+  font-family: var(--font-mono);
+  font-size: var(--font-size-base);
+  line-height: 1.6;
+  background: var(--bg-primary);
+  color: var(--text-primary);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  padding: var(--space-md);
+  resize: vertical;
+  width: 100%;
+  outline: none;
+  white-space: pre;
+  overflow: auto;
+  min-height: 120px;
+  tab-size: 2;
+}
+
+.modal-sql-editor:focus {
+  border-color: var(--accent-blue);
 }
 
 /* JSON syntax highlighting in modal */

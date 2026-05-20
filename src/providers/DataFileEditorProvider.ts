@@ -112,9 +112,25 @@ export class DataFileEditorProvider
         }
         return sql;
       },
+
+      getWriteBackTarget() {
+        // xlsx is excluded — DuckDB's excel extension is read-only.
+        const writableFormats: Record<string, "parquet" | "csv" | "tsv" | "json" | "jsonl" | "ndjson"> = {
+          parquet: "parquet",
+          csv: "csv",
+          tsv: "tsv",
+          json: "json",
+          jsonl: "jsonl",
+          ndjson: "ndjson",
+        };
+        const fmt = writableFormats[fileType];
+        return fmt ? { path: filePath, format: fmt } : null;
+      },
     };
 
-    setupOverviewWebview(webviewPanel, this.context, source);
+    setupOverviewWebview(webviewPanel, this.context, source, {
+      autoLoad: getAutoLoadOptions(),
+    });
   }
 
   /**
@@ -152,7 +168,9 @@ export class DataFileEditorProvider
         documentUri,
         db
       );
-      setupOverviewWebview(webviewPanel, this.context, source);
+      setupOverviewWebview(webviewPanel, this.context, source, {
+        autoLoad: getAutoLoadOptions(),
+      });
       return;
     }
 
@@ -263,6 +281,21 @@ export class DataFileEditorProvider
     }
     return filePath;
   }
+}
+
+/**
+ * Resolve the auto-load options when opening a data file.
+ * Returns undefined when openMode is "schema" (auto-load disabled).
+ *
+ * `limit: undefined` (or 0 in settings) means "no LIMIT" — the full result
+ * set is materialized and the table loads rows on demand via infinite scroll.
+ */
+function getAutoLoadOptions(): { limit?: number } | undefined {
+  const cfg = vscode.workspace.getConfiguration("duckdb");
+  const mode = cfg.get<string>("fileViewer.openMode", "schema");
+  if (mode !== "data") return undefined;
+  const limit = cfg.get<number>("fileViewer.openRowLimit", 0);
+  return { limit: limit > 0 ? limit : undefined };
 }
 
 // ============================================================================

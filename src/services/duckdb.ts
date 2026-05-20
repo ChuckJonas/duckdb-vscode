@@ -324,6 +324,12 @@ export class DuckDBService {
   private connection: DuckDBConnection | null = null;
   private cacheCounter = 0;
   private activeCaches: Set<string> = new Set();
+  /**
+   * Path to the temp/spill directory we created for this process.
+   * Set only when we created it ourselves (not when the user supplied one).
+   * Removed in `dispose()` so spill files don't pile up across sessions.
+   */
+  private ownedTempDir: string | null = null;
 
   /**
    * Initialize an in-memory DuckDB database
@@ -350,11 +356,22 @@ export class DuckDBService {
     const memoryLimit = options?.memoryLimit || "1.5GB";
     await this.connection.run(`SET memory_limit = '${memoryLimit}'`);
 
-    // Use OS temp directory so spill files don't pollute the user's
-    // project and get cleaned up by the OS if the process crashes.
-    const tempDir =
-      options?.tempDirectory || path.join(os.tmpdir(), "duckdb-vscode");
-    fs.mkdirSync(tempDir, { recursive: true });
+    // Resolve the temp/spill directory.
+    //
+    // - If the user supplied one, respect it and never delete it on shutdown.
+    // - Otherwise, create a fresh per-process directory under the OS temp
+    //   root using mkdtempSync (so concurrent VS Code windows don't share
+    //   spill files), and remember it for cleanup in `dispose()`.
+    let tempDir: string;
+    if (options?.tempDirectory) {
+      tempDir = options.tempDirectory;
+      fs.mkdirSync(tempDir, { recursive: true });
+    } else {
+      const root = path.join(os.tmpdir(), "duckdb-vscode");
+      fs.mkdirSync(root, { recursive: true });
+      tempDir = fs.mkdtempSync(path.join(root, `pid-${process.pid}-`));
+      this.ownedTempDir = tempDir;
+    }
     await this.connection.run(`SET temp_directory = '${tempDir}'`);
 
     // Allow DuckDB to spill to disk when memory_limit is exceeded
@@ -365,6 +382,7 @@ export class DuckDBService {
       `🦆 DuckDB initialized (memory_limit=${memoryLimit}, temp_directory=${tempDir}, max_temp_directory_size=${maxTempSize})`
     );
   }
+
 
   /**
    * Generate a unique cache ID
@@ -673,8 +691,11 @@ export class DuckDBService {
     }
 
     try {
-      // Build query with optional filtering and sorting
-      let sql = `SELECT * FROM "${cacheId}"`;
+      // Build query with optional filtering and sorting.
+      // We always fetch DuckDB's `rowid` pseudo-column under the hidden field
+      // name `__rowid` so the webview can address a specific row for in-place
+      // edits regardless of the current sort/filter context.
+      let sql = `SELECT rowid AS __rowid, * FROM "${cacheId}"`;
       if (whereClause && whereClause.trim()) {
         sql += ` WHERE ${whereClause}`;
       }
@@ -711,6 +732,117 @@ export class DuckDBService {
     } catch (err) {
       const error = err as Error;
       throw new Error(`Failed to fetch page: ${error.message}`);
+    }
+  }
+
+  /**
+   * Update a single cell in a cached result by rowid.
+   *
+   * The user-entered string is wrapped in TRY_CAST so type-incompatible
+   * input becomes NULL instead of crashing. Empty input is treated as NULL.
+   * Returns the value as actually stored (post-cast) so the webview can
+   * reflect what DuckDB ended up writing.
+   */
+  async updateCacheCell(
+    cacheId: string,
+    rowid: number | bigint,
+    column: string,
+    columnType: string,
+    newValue: string | null
+  ): Promise<unknown> {
+    await this.initialize();
+    if (!this.connection) throw new Error("DuckDB connection not available");
+    if (!cacheId) throw new Error("Cannot edit utility-statement results");
+    if (!Number.isFinite(Number(rowid))) {
+      throw new Error(`Invalid rowid: ${rowid}`);
+    }
+
+    const escCol = column.replace(/"/g, '""');
+    let valExpr: string;
+    if (newValue === null || newValue === "") {
+      valExpr = "NULL";
+    } else {
+      const escVal = newValue.replace(/'/g, "''");
+      // TRY_CAST prevents bad input from raising — it returns NULL instead,
+      // and the post-update SELECT shows the user what landed in the table.
+      valExpr = `TRY_CAST('${escVal}' AS ${columnType})`;
+    }
+
+    await this.connection.run(
+      `UPDATE "${cacheId}" SET "${escCol}" = ${valExpr} WHERE rowid = ${rowid}`
+    );
+
+    // Re-read to return the actually-stored value (after the cast).
+    const reader = await this.connection.runAndReadAll(
+      `SELECT "${escCol}" AS v FROM "${cacheId}" WHERE rowid = ${rowid}`
+    );
+    const rows = reader.getRowObjectsJS();
+    if (rows.length === 0) {
+      throw new Error(`Row ${rowid} not found in cache`);
+    }
+    const stored = serializeRow(rows[0] as Record<string, unknown>, ["v"]).v;
+    return stored;
+  }
+
+  /**
+   * Write the cache table back to a source file. Uses a temp file +
+   * atomic rename so a crash mid-write can never corrupt the source.
+   */
+  async writeCacheToFile(
+    cacheId: string,
+    targetPath: string,
+    format: "parquet" | "csv" | "tsv" | "json" | "jsonl" | "ndjson"
+  ): Promise<void> {
+    await this.initialize();
+    if (!this.connection) throw new Error("DuckDB connection not available");
+    if (!cacheId) throw new Error("No cache to write back");
+
+    let copyOpts: string;
+    switch (format) {
+      case "parquet":
+        copyOpts = "(FORMAT PARQUET)";
+        break;
+      case "csv":
+        copyOpts = "(FORMAT CSV, HEADER true)";
+        break;
+      case "tsv":
+        copyOpts = "(FORMAT CSV, DELIMITER '\\t', HEADER true)";
+        break;
+      case "json":
+        copyOpts = "(FORMAT JSON, ARRAY true)";
+        break;
+      case "jsonl":
+      case "ndjson":
+        copyOpts = "(FORMAT JSON)";
+        break;
+      default:
+        throw new Error(`Unsupported write-back format: ${format}`);
+    }
+
+    const tmpPath = `${targetPath}.duckdb-vscode.tmp`;
+    const escTmp = tmpPath.replace(/'/g, "''");
+
+    // Clean up any leftover tmp from a previous failed write.
+    try {
+      fs.rmSync(tmpPath, { force: true });
+    } catch {
+      /* best-effort */
+    }
+
+    try {
+      // ORDER BY rowid preserves the original row order on disk.
+      await this.connection.run(
+        `COPY (SELECT * FROM "${cacheId}" ORDER BY rowid) TO '${escTmp}' ${copyOpts}`
+      );
+      // Atomic rename — the source file is never partially written.
+      fs.renameSync(tmpPath, targetPath);
+    } catch (e) {
+      try {
+        fs.rmSync(tmpPath, { force: true });
+      } catch {
+        /* best-effort */
+      }
+      throw e;
     }
   }
 
@@ -1925,16 +2057,42 @@ export class DuckDBService {
   }
 
   /**
-   * Close the database connection
+   * Close the database connection and remove any spill directory we created.
+   *
+   * Cleaning the spill dir on shutdown matters because DuckDB temp files can
+   * be large (hundreds of MB to many GB once memory_limit is exceeded). If we
+   * leak them across sessions, /tmp accumulates indefinitely. Best-effort —
+   * we never throw from the shutdown path.
    */
   async close(): Promise<void> {
-    await this.dropAllCaches();
+    try {
+      await this.dropAllCaches();
+    } catch (e) {
+      console.warn("🦆 dropAllCaches failed during close:", e);
+    }
 
     if (this.connection) {
-      this.connection.closeSync();
+      try {
+        this.connection.closeSync();
+      } catch (e) {
+        console.warn("🦆 connection close failed:", e);
+      }
       this.connection = null;
     }
     this.instance = null;
+
+    if (this.ownedTempDir) {
+      try {
+        fs.rmSync(this.ownedTempDir, { recursive: true, force: true });
+        console.log(`🦆 Removed temp dir ${this.ownedTempDir}`);
+      } catch (e) {
+        console.warn(
+          `🦆 Failed to remove temp dir ${this.ownedTempDir}:`,
+          e
+        );
+      }
+      this.ownedTempDir = null;
+    }
   }
 }
 

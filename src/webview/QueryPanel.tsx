@@ -17,6 +17,8 @@ interface QueryPanelProps {
   result: MultiQueryResultWithPages;
   pageSize: number;
   maxCopyRows: number;
+  /** When true, cell-edit-with-save is enabled in the results table. */
+  editable?: boolean;
   onBackToOverview?: () => void;
 }
 
@@ -24,11 +26,13 @@ interface QueryPanelProps {
  * QueryPanel - Top-level component for displaying query results
  * Handles the distinction between single and multi-statement results
  */
-export function QueryPanel({ result, pageSize, maxCopyRows, onBackToOverview }: QueryPanelProps) {
-  // For multi-statement with more than one statement, render collapsible container
+export function QueryPanel({ result, pageSize, maxCopyRows, editable = false, onBackToOverview }: QueryPanelProps) {
+  // For multi-statement with more than one statement, render collapsible container.
+  // Multi-statement is never editable (we don't track which cache the edit
+  // belongs to per-statement).
   if (result.statements.length > 1) {
     return (
-      <MultiStatementContainer 
+      <MultiStatementContainer
         statements={result.statements}
         totalExecutionTime={result.totalExecutionTime}
         pageSize={pageSize}
@@ -36,13 +40,13 @@ export function QueryPanel({ result, pageSize, maxCopyRows, onBackToOverview }: 
       />
     );
   }
-  
+
   // Single statement - render directly (always expanded, not collapsible)
   const stmt = result.statements[0];
   if (!stmt) {
     return <div className="empty-state">No results</div>;
   }
-  
+
   return (
     <>
       {onBackToOverview && (
@@ -58,6 +62,7 @@ export function QueryPanel({ result, pageSize, maxCopyRows, onBackToOverview }: 
         initialPage={stmt.page}
         pageSize={pageSize}
         maxCopyRows={maxCopyRows}
+        editable={editable}
         hasResults={stmt.meta.hasResults}
         isCollapsible={false}
         isExpanded={true}
