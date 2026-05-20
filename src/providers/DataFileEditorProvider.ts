@@ -292,7 +292,7 @@ export class DataFileEditorProvider
  */
 function getAutoLoadOptions(): { limit?: number } | undefined {
   const cfg = vscode.workspace.getConfiguration("duckdb");
-  const mode = cfg.get<string>("fileViewer.openMode", "data");
+  const mode = cfg.get<string>("fileViewer.openMode", "schema");
   if (mode !== "data") return undefined;
   const limit = cfg.get<number>("fileViewer.openRowLimit", 0);
   return { limit: limit > 0 ? limit : undefined };

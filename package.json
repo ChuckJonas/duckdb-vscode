@@ -849,12 +849,12 @@
             "data",
             "schema"
           ],
-          "default": "data",
+          "default": "schema",
           "enumDescriptions": [
             "Immediately load the first N rows of data (use the schema overview via the Back button)",
             "Show the schema/column overview first; user picks what to query"
           ],
-          "markdownDescription": "Default landing view when opening a data file (parquet, CSV, JSON, etc.).\n\n- `data` (default): jumps straight into rows — see [`#duckdb.fileViewer.openRowLimit#`](command:workbench.action.openSettings?%22duckdb.fileViewer.openRowLimit%22) for the limit.\n- `schema`: keeps the previous behaviour of showing column metadata first."
+          "markdownDescription": "Default landing view when opening a data file (parquet, CSV, JSON, etc.).\n\n- `schema` (default): shows column metadata first — safe for large files.\n- `data`: jumps straight into rows (full result materialized into a temp table) — see [`#duckdb.fileViewer.openRowLimit#`](command:workbench.action.openSettings?%22duckdb.fileViewer.openRowLimit%22) for an optional cap."
         },
         "duckdb.fileViewer.openRowLimit": {
           "type": "number",

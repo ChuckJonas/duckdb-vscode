@@ -20,7 +20,7 @@ This extension brings DuckDB directly into VS Code with a focus on creating a pr
 
 All queries execute using the [DuckDB Node API](https://www.npmjs.com/package/@duckdb/node-api) embedded in VS Code. By default, queries run against an in-memory database that resets when VS Code closes. You can attach persistent `.duckdb` files or connect to remote sources like Postgres, S3, or Google Sheets.
 
-Performance Note: When you execute a query, the extension creates a temporary table to enable pagination, sorting, filtering, and exporting. For large datasets, DuckDB will spill to disk automatically — see [Memory & Performance](#memory--performance) settings if you run into limits.
+Performance Note: When you execute a query, the extension creates a temporary table to enable sorting, filtering, and exporting. Results stream into the viewport via infinite scroll — only the visible rows are in the DOM. For large datasets, DuckDB will spill to disk automatically — see [Memory & Performance](#memory--performance) settings if you run into limits.
 
 ## Features
 
@@ -43,11 +43,12 @@ Performance Note: When you execute a query, the extension creates a temporary ta
 
 ### Results Table
 
-- **Server-side pagination** — Handle millions of rows efficiently via cached temp tables
+- **Virtualized infinite scroll** — Handle millions of rows efficiently; only visible rows live in the DOM
 - **Quick Column sorting** — Click headers to sort ASC/DESC
 - **Quick Column filtering** — Filter by values, ranges, or patterns
 - **Cell selection** — Click, Shift+click for ranges, copy to clipboard
-- **Cell expansion** — Double-click to view full values (JSON syntax highlighted)
+- **Cell expansion & editing** — Double-click to view full values (JSON syntax highlighted), or edit and save back to the source file (parquet, csv, json, etc.)
+- **Editable SQL** — "View SQL" modals are now editors: tweak and press ⌘↵ to re-run
 - **Export options** — CSV, Parquet, JSON, JSONL, or open in new tab
 
 ### Column Statistics
@@ -194,6 +195,23 @@ Automatically open `.jsonl` and `.ndjson` files with the DuckDB data viewer (def
 
 Automatically open `.xlsx` files with the DuckDB data viewer (default: `true`). For workbooks with multiple sheets, a sheet picker is shown first. Requires the DuckDB `excel` extension, which is auto-installed on first use.
 
+#### `duckdb.fileViewer.openMode`
+
+Landing view when opening a data file (default: `"schema"`).
+
+| Value    | Description                                                                                   |
+| -------- | --------------------------------------------------------------------------------------------- |
+| `schema` | Show column metadata first — safe for any file size. Click "Query" to load rows on demand.    |
+| `data`   | Jump straight into rows. The full result is materialized into a DuckDB temp table and rows stream into the viewport via infinite scroll. |
+
+> **Large files:** In `data` mode the entire file is loaded into a temp table. DuckDB will spill to disk if it exceeds `memoryLimit`, but very large files can still be slow to open. If you regularly work with multi-GB files, keep the default `schema` mode and use the query buttons to sample or project specific columns.
+
+#### `duckdb.fileViewer.openRowLimit`
+
+Optional row cap when `openMode` is `"data"` (default: `0` = unlimited).
+
+Set to a positive number (e.g. `100000`) to apply a `LIMIT` to the auto-open query. Useful for sampling huge files without materializing the full result.
+
 ### Results Display
 
 #### `duckdb.resultsLocation`
@@ -209,7 +227,7 @@ Where to open query results (default: `"active"`).
 
 #### `duckdb.pageSize`
 
-Rows per page in results table (default: `1000`, range: 100–10,000).
+Chunk size for virtualized scroll in the results table (default: `100`, range: 10–10,000). Rows load on demand as you scroll; this controls how many are fetched per network round-trip to the extension host.
 
 #### `duckdb.maxCopyRows`
 

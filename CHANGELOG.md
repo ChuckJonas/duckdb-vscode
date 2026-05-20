@@ -8,8 +8,7 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ### Added
 - **Editable SQL modal** — every "View SQL" / "SQL Preview" modal is now a SQL editor: tweak the query and press ⌘↵ / Ctrl+↵ to run it in place. Works for the file overview preview, the original-query modal in the results table, and the filtered/sorted full-query modal. "Open in Editor" now uses the edited text. Tab inserts spaces.
-- **Land directly on data** — opening a `.parquet` (or other data file) now jumps straight into the data view instead of the schema overview. The schema view is still one click away via "Back to Overview".
-- New `duckdb.fileViewer.openMode` setting (`data` | `schema`, default `data`) and `duckdb.fileViewer.openRowLimit` (default `0` = unlimited) to control the new landing behaviour.
+- New `duckdb.fileViewer.openMode` setting (`data` | `schema`, default `schema`) and `duckdb.fileViewer.openRowLimit` (default `0` = unlimited). Set `openMode` to `"data"` to jump straight into rows on file open — useful for smaller files or when you prefer immediate data access.
 - Skeleton-cell shimmer for rows whose chunk hasn't arrived yet — visible while you scroll faster than chunks fetch.
 
 ### Changed

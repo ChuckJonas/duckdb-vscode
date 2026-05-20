@@ -15,7 +15,7 @@ import {
 } from './ui/FilterBar';
 import { ColumnFilterPopover } from './ui/ColumnFilterPopover';
 import { formatValue, formatTableAsText } from './utils/format';
-import { Copy, Download, ExternalLink, ChevronDown, Filter, Code, BarChart2, ArrowUp, ArrowDown, ChevronsUpDown, RefreshCw } from 'lucide-react';
+import { Copy, Download, ExternalLink, ChevronDown, Filter, Code, BarChart2, ArrowUp, ArrowDown, ChevronsUpDown, RefreshCw, Save } from 'lucide-react';
 import { CopyButton } from './ui/CopyButton';
 import { IconButton } from './ui/IconButton';
 import { PopoverMenu } from './ui/PopoverMenu';
@@ -1474,7 +1474,7 @@ function CellExpansionModal({
   // Custom modal action: Save button (only when editable).
   const actions = editable
     ? [{
-        icon: isSaving ? <span className="cell-modal-spinner" /> : <span>💾</span>,
+        icon: isSaving ? <span className="cell-modal-spinner" /> : <Save size={14} />,
         label: isSaving ? 'Saving…' : (isDirty ? 'Save (⌘↵)' : 'Save'),
         onClick: handleSave,
       }]
