@@ -30,6 +30,16 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 - **Resizable row-number gutter.** Default width now scales with the digit count of the current result set (so `10,000,000` doesn't clip), and a drag handle on the `#` header lets you resize it like any other column. Row indexes are formatted with thousands separators.
 - **Editable cells with save-to-file.** Double-click a cell in the data viewer to open the expansion modal in **edit** mode — type the new value and press ⌘↵ (or click Save) to persist. Save UPDATEs the in-memory DuckDB cache and rewrites the source file via `COPY ... TO 'tmp'` followed by an atomic rename, so a crash mid-write can never corrupt the original. Empty input means NULL; `TRY_CAST` makes type-incompatible input fall back to NULL instead of erroring. Supported formats: `parquet`, `csv`, `tsv`, `json`, `jsonl`, `ndjson`. Editing is gated to safe contexts only — disabled when the cache is a derived projection, a `LIMIT`-sampled load, an ad-hoc SQL result, or an `xlsx` sheet (no DuckDB write support). Complex types (`LIST`, `STRUCT`, `MAP`) are read-only for now.
 
+## [0.0.25] - 2026-05-20
+
+### Fixed
+- Opening a CSV (or any data file) no longer blocks for ~75s when a configured remote database (e.g. Postgres) is unreachable. Auto-attach now runs in parallel on isolated connections with a configurable timeout, so a stuck `ATTACH` cannot block extension activation, the main connection, or unrelated file previews.
+- Queries with a trailing `-- comment` on the last line no longer fail with a parser error. The internal `CREATE TEMP TABLE ... AS (...)` wrapper now puts the closing `)` on its own line so it isn't consumed by the line comment ([#6](https://github.com/ChuckJonas/duckdb-vscode/issues/6)).
+- The results panel's Refresh button now re-runs the most recently executed SQL instead of reverting to the SQL from the first run. The cached `queries` array was not being refreshed when a panel was reused for a new run.
+
+### Added
+- New `duckdb.autoAttachTimeoutMs` setting (default `10000`, min `1000`) — how long auto-attach waits for each database on startup before marking it as detached and surfacing a Retry notification.
+
 ## [0.0.24] - 2026-03-25
 
 ### Added

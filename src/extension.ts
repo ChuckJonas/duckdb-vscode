@@ -288,8 +288,9 @@ export async function activate(context: vscode.ExtensionContext) {
     await migrateExtensionsSetting();
     // Auto-load extensions from workspace settings
     await autoLoadExtensions(db);
-    // Auto-attach databases from workspace settings
-    await autoAttachDatabases(db);
+    // Auto-attach is kicked off further down (fire-and-forget) once the
+    // explorer/status bar exist, so a stuck remote ATTACH can't block
+    // activation or file-viewer previews.
 
     // Initialize query history (optional persistence)
     const historyService = getHistoryService();
@@ -1608,6 +1609,17 @@ export async function activate(context: vscode.ExtensionContext) {
     showCollapseAll: true,
   });
 
+  // Kick off auto-attach in the background. Each attach runs on its own
+  // connection with a timeout, so a stuck remote ATTACH (e.g. Postgres
+  // while off VPN) never blocks activation, the main connection, or the
+  // custom editor that might have triggered activation in the first place.
+  autoAttachDatabases(db, () => {
+    databaseExplorer.refresh();
+    updateStatusBar();
+  }).catch((error) => {
+    console.error("🦆 autoAttachDatabases failed:", error);
+  });
+
   const explorerRefreshCmd = vscode.commands.registerCommand(
     "duckdb.explorer.refresh",
     () => {
@@ -2860,15 +2872,53 @@ export async function deactivate() {
 }
 
 /**
- * Auto-attach databases from workspace settings
- * Only attaches databases that were attached last session (attached !== false)
+ * Race a promise against a timeout. Rejects with a timeout error if
+ * the promise doesn't settle within `ms`. Does NOT cancel the
+ * underlying work (the promise keeps running in the background).
+ */
+function withTimeout<T>(
+  p: Promise<T>,
+  ms: number,
+  message: string
+): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(message)), ms);
+    p.then(
+      (v) => {
+        clearTimeout(timer);
+        resolve(v);
+      },
+      (e) => {
+        clearTimeout(timer);
+        reject(e);
+      }
+    );
+  });
+}
+
+/**
+ * Auto-attach databases from workspace settings.
+ *
+ * Each attach runs in parallel on its own throwaway connection, wrapped
+ * in a timeout. A stuck attach (e.g. remote Postgres while off VPN)
+ * therefore cannot block:
+ *   - other attaches
+ *   - the main connection (autocomplete, file viewers, queries)
+ *   - extension activation
+ *
+ * Only attaches databases that were attached last session (attached !== false).
  */
 async function autoAttachDatabases(
-  db: ReturnType<typeof getDuckDBService>
+  db: ReturnType<typeof getDuckDBService>,
+  onAttachStateChanged: () => void
 ): Promise<void> {
   const config = getWorkspaceConfig();
   const databases = config.get<DatabaseConfig[]>("databases", []);
   const defaultDb = config.get<string>("defaultDatabase", "memory");
+  const timeoutMs = Math.max(
+    1000,
+    config.get<number>("autoAttachTimeoutMs", 10000)
+  );
 
   if (databases.length === 0) {
     return;
@@ -2876,96 +2926,37 @@ async function autoAttachDatabases(
 
   const workspaceRoot =
     vscode.workspace.workspaceFolders?.[0]?.uri.fsPath || "";
-  const runFn = (sql: string) => db.run(sql);
+
+  const results = await Promise.all(
+    databases.map((dbConfig) =>
+      attachSingleDatabase(
+        db,
+        dbConfig,
+        workspaceRoot,
+        timeoutMs,
+        onAttachStateChanged
+      )
+    )
+  );
+
   let attachedCount = 0;
   let skippedCount = 0;
-
-  for (const dbConfig of databases) {
-    // Only attach if it was attached last session (attached defaults to true for backward compat)
-    if (dbConfig.attached === false) {
-      console.log(`🦆 Skipping "${dbConfig.alias}" (was detached)`);
+  for (const status of results) {
+    if (status === "attached") {
+      attachedCount++;
+    } else if (status === "skipped") {
       skippedCount++;
-      continue;
-    }
-
-    try {
-      switch (dbConfig.type) {
-        case "memory":
-          // In-memory databases are implicit, but we can create named ones
-          if (dbConfig.alias && dbConfig.alias !== "memory") {
-            await attachMemoryDatabase(runFn, dbConfig.alias);
-          }
-          attachedCount++;
-          break;
-
-        case "file": {
-          if (!dbConfig.path) {
-            vscode.window.showWarningMessage(
-              `DuckDB: Database "${dbConfig.alias}" missing path`
-            );
-            continue;
-          }
-
-          // Resolve relative paths from workspace root
-          const filePath = path.isAbsolute(dbConfig.path)
-            ? dbConfig.path
-            : path.resolve(workspaceRoot, dbConfig.path);
-
-          // Check if file exists
-          try {
-            await vscode.workspace.fs.stat(vscode.Uri.file(filePath));
-          } catch {
-            vscode.window.showErrorMessage(
-              `DuckDB: Database file not found: ${dbConfig.path}`
-            );
-            // Mark as detached since we couldn't attach it
-            await updateDatabaseAttachedState(dbConfig.alias, false);
-            continue;
-          }
-
-          await attachDatabase(
-            runFn,
-            filePath,
-            dbConfig.alias,
-            dbConfig.readOnly
-          );
-          attachedCount++;
-          break;
-        }
-
-        case "manual": {
-          if (!dbConfig.sql) {
-            vscode.window.showWarningMessage(
-              `DuckDB: Database "${dbConfig.alias}" missing sql`
-            );
-            continue;
-          }
-          await runManualSql(runFn, dbConfig.sql);
-          attachedCount++;
-          break;
-        }
-
-        default:
-          vscode.window.showWarningMessage(
-            `DuckDB: Unknown database type for "${dbConfig.alias}"`
-          );
-      }
-    } catch (error) {
-      vscode.window.showErrorMessage(
-        `DuckDB: Failed to attach "${dbConfig.alias}": ${error}`
-      );
-      // Mark as detached since we couldn't attach it
-      await updateDatabaseAttachedState(dbConfig.alias, false);
     }
   }
 
-  // Switch to default database (only if it's attached)
+  // Switch to default database (only if it was successfully attached)
   if (defaultDb && defaultDb !== "memory") {
     try {
-      await switchDatabase(runFn, defaultDb);
+      await switchDatabase(async (sql) => db.run(sql), defaultDb);
       currentDatabase = defaultDb;
+      onAttachStateChanged();
     } catch (error) {
-      // Default database might not be attached, that's okay
+      // Default database might not be attached (timeout, unreachable, etc.)
       console.log(
         `🦆 Could not switch to default database "${defaultDb}": ${error}`
       );
@@ -2976,6 +2967,131 @@ async function autoAttachDatabases(
     console.log(
       `🦆 Auto-attached ${attachedCount} database(s), skipped ${skippedCount}`
     );
+  }
+}
+
+type AttachStatus = "attached" | "skipped" | "failed";
+
+/**
+ * Attach a single database on its own throwaway connection so a slow
+ * attach (e.g. remote Postgres) doesn't block the main connection.
+ */
+async function attachSingleDatabase(
+  db: ReturnType<typeof getDuckDBService>,
+  dbConfig: DatabaseConfig,
+  workspaceRoot: string,
+  timeoutMs: number,
+  onAttachStateChanged: () => void
+): Promise<AttachStatus> {
+  if (dbConfig.attached === false) {
+    console.log(`🦆 Skipping "${dbConfig.alias}" (was detached)`);
+    return "skipped";
+  }
+
+  // Validate config before doing any async work
+  if (dbConfig.type === "file" && !dbConfig.path) {
+    vscode.window.showWarningMessage(
+      `DuckDB: Database "${dbConfig.alias}" missing path`
+    );
+    return "failed";
+  }
+  if (dbConfig.type === "manual" && !dbConfig.sql) {
+    vscode.window.showWarningMessage(
+      `DuckDB: Database "${dbConfig.alias}" missing sql`
+    );
+    return "failed";
+  }
+
+  // For file databases, check existence up front — cheaper than waiting
+  // on ATTACH to fail, and lets us give a precise error message.
+  let resolvedFilePath: string | undefined;
+  if (dbConfig.type === "file" && dbConfig.path) {
+    resolvedFilePath = path.isAbsolute(dbConfig.path)
+      ? dbConfig.path
+      : path.resolve(workspaceRoot, dbConfig.path);
+    try {
+      await vscode.workspace.fs.stat(vscode.Uri.file(resolvedFilePath));
+    } catch {
+      vscode.window.showErrorMessage(
+        `DuckDB: Database file not found: ${dbConfig.path}`
+      );
+      await updateDatabaseAttachedState(dbConfig.alias, false);
+      return "failed";
+    }
+  }
+
+  let conn: { run: (sql: string) => Promise<void>; close: () => void };
+  try {
+    conn = await db.createConnection();
+  } catch (error) {
+    vscode.window.showErrorMessage(
+      `DuckDB: Failed to open connection for "${dbConfig.alias}": ${error}`
+    );
+    return "failed";
+  }
+
+  try {
+    const attachTask = (async () => {
+      switch (dbConfig.type) {
+        case "memory":
+          if (dbConfig.alias && dbConfig.alias !== "memory") {
+            await conn.run(`ATTACH ':memory:' AS "${dbConfig.alias}"`);
+          }
+          break;
+
+        case "file": {
+          const mode = dbConfig.readOnly ? " (READ_ONLY)" : "";
+          const escapedPath = (resolvedFilePath as string).replace(/'/g, "''");
+          await conn.run(
+            `ATTACH '${escapedPath}' AS "${dbConfig.alias}"${mode}`
+          );
+          break;
+        }
+
+        case "manual":
+          await conn.run(dbConfig.sql as string);
+          break;
+
+        default:
+          throw new Error(`Unknown database type: ${dbConfig.type}`);
+      }
+    })();
+
+    await withTimeout(
+      attachTask,
+      timeoutMs,
+      `__attach_timeout__:${dbConfig.alias}`
+    );
+
+    onAttachStateChanged();
+    return "attached";
+  } catch (error) {
+    const errMessage = error instanceof Error ? error.message : String(error);
+    const isTimeout = errMessage.startsWith("__attach_timeout__:");
+
+    const message = isTimeout
+      ? `DuckDB: Auto-attach timed out for "${dbConfig.alias}" after ${timeoutMs}ms (check VPN/network). Marked as detached.`
+      : `DuckDB: Failed to attach "${dbConfig.alias}": ${errMessage}`;
+
+    // Non-blocking notification with a Retry affordance.
+    vscode.window
+      .showWarningMessage(message, "Retry", "Open Settings")
+      .then((choice) => {
+        if (choice === "Retry") {
+          vscode.commands.executeCommand("duckdb.selectDatabase");
+        } else if (choice === "Open Settings") {
+          vscode.commands.executeCommand(
+            "workbench.action.openSettings",
+            "duckdb.databases"
+          );
+        }
+      });
+
+    await updateDatabaseAttachedState(dbConfig.alias, false);
+    onAttachStateChanged();
+    return "failed";
+  } finally {
+    conn.close();
   }
 }
 

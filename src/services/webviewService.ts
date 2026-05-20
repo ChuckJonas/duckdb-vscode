@@ -235,12 +235,15 @@ function tryReuseExistingPanel(
       db.dropCache(cacheId).catch(() => {});
     }
 
-    // Update state
+    // Update state. `queries` must be refreshed too — otherwise the
+    // panel's "Refresh" button would re-run the SQL from the very first
+    // execution instead of the latest one the user just ran.
     state.panel.title = title;
     state.cacheIds = cacheIds;
     state.currentResult = result;
     state.sortColumn = undefined;
     state.sortDirection = undefined;
+    state.queries = result.statements.map((s) => s.meta.sql);
 
     // Reveal in current location (don't move the panel)
     state.panel.reveal();

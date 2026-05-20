@@ -2,7 +2,7 @@
   "name": "duckdb",
   "displayName": "DuckDB",
   "description": "A DuckDB client for VS Code — query CSV, Parquet, JSON, and Excel files directly",
-  "version": "0.0.24",
+  "version": "0.0.25",
   "publisher": "chuckjonas",
   "icon": "resources/icon.png",
   "repository": {
@@ -736,6 +736,12 @@
           "type": "string",
           "default": "",
           "description": "Directory for DuckDB temp/spill files. Leave empty to use the OS temp directory."
+        },
+        "duckdb.autoAttachTimeoutMs": {
+          "type": "number",
+          "default": 10000,
+          "minimum": 1000,
+          "description": "Timeout (ms) for auto-attaching each database on startup. If an attach takes longer (e.g. a remote Postgres database while off VPN), it's marked as detached and a notification offers Retry. Does not affect manual attaches."
         },
         "duckdb.resultsLocation": {
           "type": "string",

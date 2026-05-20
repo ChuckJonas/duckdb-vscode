@@ -536,8 +536,12 @@ export class DuckDBService {
     const cacheId = this.generateCacheId();
 
     try {
-      // Create temp table with results
-      const createSql = `CREATE TEMP TABLE "${cacheId}" AS (${sql})`;
+      // Create temp table with results.
+      // The newlines around `sql` are load-bearing: if the user's last line
+      // ends in a `-- comment`, putting the closing `)` on the same line
+      // would make it part of the comment and break the query.
+      // See: https://github.com/ChuckJonas/duckdb-vscode/issues/6
+      const createSql = `CREATE TEMP TABLE "${cacheId}" AS (\n${sql}\n)`;
       await this.connection.run(createSql);
       this.activeCaches.add(cacheId);
 
@@ -1468,6 +1472,41 @@ export class DuckDBService {
     for (const cacheId of caches) {
       await this.dropCache(cacheId);
     }
+  }
+
+  /**
+   * Create a new connection on the shared DuckDB instance.
+   *
+   * ATTACH state is instance-wide, so running ATTACH on a throwaway
+   * connection still exposes the database to the main connection.
+   * Use this to isolate potentially slow operations (e.g. a remote
+   * Postgres ATTACH) that would otherwise block the main connection
+   * while they stall on network I/O.
+   *
+   * Callers MUST call close() in a finally block.
+   */
+  async createConnection(): Promise<{
+    run: (sql: string) => Promise<void>;
+    close: () => void;
+  }> {
+    await this.initialize();
+    if (!this.instance) {
+      throw new Error("DuckDB instance not available");
+    }
+
+    const conn = await this.instance.connect();
+    return {
+      run: async (sql: string) => {
+        await conn.run(sql);
+      },
+      close: () => {
+        try {
+          conn.closeSync();
+        } catch {
+          // Connection may already be closed
+        }
+      },
+    };
   }
 
   /**
