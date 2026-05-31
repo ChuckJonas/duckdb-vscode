@@ -12,7 +12,11 @@ import {
   collectCacheIds,
   type MultiQueryResultWithPages,
 } from "../services/duckdb";
-import { handleExport } from "../services/webviewService";
+import {
+  handleExport,
+  linkAdHocEditor,
+  unlinkAdHocEditor,
+} from "../services/webviewService";
 import type {
   DataOverviewMetadata,
   ContainerOverviewMetadata,
@@ -102,7 +106,7 @@ export function setupOverviewWebview(
   let cacheIds: string[] = [];
   let sortColumn: string | undefined;
   let sortDirection: "asc" | "desc" | undefined;
-  // The most recently executed query (default top-N, queryFile, or runAdHoc).
+  // The most recently executed query (default top-N or queryFile).
   // Used so "refresh" re-runs the last query rather than dropping back to
   // the schema overview.
   let lastQuerySql: string | undefined;
@@ -113,6 +117,9 @@ export function setupOverviewWebview(
    * projections, LIMITed samples, and ad-hoc SQL.
    */
   let cacheIsFullSource = false;
+  // Docs spawned via "Open in Editor"; running them routes results here.
+  const linkedDocs = new Set<string>();
+  let closeListener: vscode.Disposable | undefined;
 
   // Set up webview options and content
   panel.webview.options = {
@@ -133,11 +140,16 @@ export function setupOverviewWebview(
   );
   panel.webview.html = getWebviewHtml(scriptUri);
 
-  // Clean up DuckDB caches when the editor is closed
+  // Clean up DuckDB caches and any ad-hoc editor links when the editor closes
   panel.onDidDispose(() => {
     for (const id of cacheIds) {
       db.dropCache(id).catch(() => {});
     }
+    for (const docUri of linkedDocs) {
+      unlinkAdHocEditor(docUri);
+    }
+    linkedDocs.clear();
+    closeListener?.dispose();
   });
 
   // ------------------------------------------------------------------
@@ -219,6 +231,47 @@ export function setupOverviewWebview(
   }
 
   // ------------------------------------------------------------------
+  // Display a pre-computed result (run from a linked "Open in Editor"
+  // doc) inside this panel, adopting its caches rather than re-running.
+  // ------------------------------------------------------------------
+  function displayExternalResult(
+    result: MultiQueryResultWithPages,
+    resultPageSize: number,
+    resultMaxCopyRows: number
+  ): void {
+    resetCaches();
+    cacheIds = collectCacheIds(result);
+    // So the panel's "Refresh" re-runs the edited query, not the source view.
+    lastQuerySql = result.statements.map((s) => s.meta.sql).join(";\n");
+    // Ad-hoc / derived results are never safe to write back to the source.
+    cacheIsFullSource = false;
+    // Surface the panel but keep focus on the editor the user ran from.
+    panel.reveal(undefined, true);
+    panel.webview.postMessage({
+      type: "queryResult",
+      data: result,
+      pageSize: resultPageSize,
+      maxCopyRows: resultMaxCopyRows,
+      editable: false,
+    });
+  }
+
+  function linkEditorDoc(doc: vscode.TextDocument): void {
+    const key = doc.uri.toString();
+    linkedDocs.add(key);
+    linkAdHocEditor(key, { panel, display: displayExternalResult });
+    // Lazily wire a close listener so reused untitled URIs don't leak links.
+    if (!closeListener) {
+      closeListener = vscode.workspace.onDidCloseTextDocument((closed) => {
+        const closedKey = closed.uri.toString();
+        if (linkedDocs.delete(closedKey)) {
+          unlinkAdHocEditor(closedKey);
+        }
+      });
+    }
+  }
+
+  // ------------------------------------------------------------------
   // Message handler
   // ------------------------------------------------------------------
   panel.webview.onDidReceiveMessage(async (message) => {
@@ -265,13 +318,7 @@ export function setupOverviewWebview(
         await vscode.window.showTextDocument(doc, {
           viewColumn: vscode.ViewColumn.Beside,
         });
-        break;
-      }
-
-      case "runAdHoc": {
-        if (typeof message.sql !== "string" || !message.sql.trim()) break;
-        // Ad-hoc edits produce a derived result; never safe to write back.
-        await runQuery(message.sql, "Running query…", { editable: false });
+        linkEditorDoc(doc);
         break;
       }
 
@@ -503,9 +550,22 @@ export function setupOverviewWebview(
         }
         break;
 
-      case "goToSource":
-        // No-op in overview mode — there is no source file to navigate to.
+      case "goToSource": {
+        // File-overview panels have no source .sql file. The webview's
+        // "Open in Editor" affordance still hands the user off here for
+        // the source-query view of the modal; treat that as "open the
+        // current query as an untitled .sql doc."
+        const sql = lastQuerySql ?? source.buildSelectSql();
+        const doc = await vscode.workspace.openTextDocument({
+          content: sql,
+          language: "sql",
+        });
+        await vscode.window.showTextDocument(doc, {
+          viewColumn: vscode.ViewColumn.Beside,
+        });
+        linkEditorDoc(doc);
         break;
+      }
     }
   });
 }
@@ -547,6 +607,9 @@ export function setupMultiTableOverviewWebview(
   let sortDirection: "asc" | "desc" | undefined;
   let activeSource: OverviewDataSource | null = null;
   let containerMeta: ContainerOverviewMetadata | null = null;
+  // Docs spawned via "Open in Editor"; running them routes results here.
+  const linkedDocs = new Set<string>();
+  let closeListener: vscode.Disposable | undefined;
 
   panel.webview.options = {
     enableScripts: true,
@@ -570,10 +633,48 @@ export function setupMultiTableOverviewWebview(
     for (const id of cacheIds) {
       db.dropCache(id).catch(() => {});
     }
+    for (const docUri of linkedDocs) {
+      unlinkAdHocEditor(docUri);
+    }
+    linkedDocs.clear();
+    closeListener?.dispose();
   });
 
   function sendLoadingStatus(message: string): void {
     panel.webview.postMessage({ type: "loadingStatus", message });
+  }
+
+  // Display a pre-computed result (run from a linked "Open in Editor" doc)
+  // inside this panel. Multi-table sources (xlsx) are never write-back.
+  function displayExternalResult(
+    result: MultiQueryResultWithPages,
+    resultPageSize: number,
+    resultMaxCopyRows: number
+  ): void {
+    resetCaches();
+    cacheIds = collectCacheIds(result);
+    panel.reveal(undefined, true);
+    panel.webview.postMessage({
+      type: "queryResult",
+      data: result,
+      pageSize: resultPageSize,
+      maxCopyRows: resultMaxCopyRows,
+      editable: false,
+    });
+  }
+
+  function linkEditorDoc(doc: vscode.TextDocument): void {
+    const key = doc.uri.toString();
+    linkedDocs.add(key);
+    linkAdHocEditor(key, { panel, display: displayExternalResult });
+    if (!closeListener) {
+      closeListener = vscode.workspace.onDidCloseTextDocument((closed) => {
+        const closedKey = closed.uri.toString();
+        if (linkedDocs.delete(closedKey)) {
+          unlinkAdHocEditor(closedKey);
+        }
+      });
+    }
   }
 
   async function sendContainerMetadata(): Promise<void> {
@@ -689,30 +790,7 @@ export function setupMultiTableOverviewWebview(
         await vscode.window.showTextDocument(doc, {
           viewColumn: vscode.ViewColumn.Beside,
         });
-        break;
-      }
-
-      case "runAdHoc": {
-        try {
-          if (typeof message.sql !== "string" || !message.sql.trim()) break;
-          sendLoadingStatus("Running query…");
-          resetCaches();
-          const result = await db.executeQuery(message.sql, pageSize);
-          cacheIds = collectCacheIds(result);
-          panel.webview.postMessage({
-            type: "queryResult",
-            data: result,
-            pageSize,
-            maxCopyRows,
-            // Multi-table sources (xlsx) never support write-back.
-            editable: false,
-          });
-        } catch (error) {
-          panel.webview.postMessage({
-            type: "queryError",
-            error: String(error),
-          });
-        }
+        linkEditorDoc(doc);
         break;
       }
 
@@ -900,8 +978,24 @@ export function setupMultiTableOverviewWebview(
         }
         break;
 
-      case "goToSource":
+      case "goToSource": {
+        // Multi-table panels (xlsx etc.) have no source .sql file.
+        // Treat the webview's "Open in Editor" hand-off as "open the
+        // current sheet's default SELECT as an untitled .sql doc."
+        if (!activeSource) {
+          break;
+        }
+        const sql = activeSource.buildSelectSql();
+        const doc = await vscode.workspace.openTextDocument({
+          content: sql,
+          language: "sql",
+        });
+        await vscode.window.showTextDocument(doc, {
+          viewColumn: vscode.ViewColumn.Beside,
+        });
+        linkEditorDoc(doc);
         break;
+      }
     }
   });
 }

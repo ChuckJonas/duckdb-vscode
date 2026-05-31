@@ -15,7 +15,7 @@ import {
 } from './ui/FilterBar';
 import { ColumnFilterPopover } from './ui/ColumnFilterPopover';
 import { formatValue, formatTableAsText } from './utils/format';
-import { Copy, Download, ExternalLink, ChevronDown, Filter, Code, BarChart2, ArrowUp, ArrowDown, ChevronsUpDown, RefreshCw, Save } from 'lucide-react';
+import { Copy, Download, ExternalLink, ChevronDown, Filter, BarChart2, ArrowUp, ArrowDown, ChevronsUpDown, RefreshCw, Save } from 'lucide-react';
 import { CopyButton } from './ui/CopyButton';
 import { IconButton } from './ui/IconButton';
 import { PopoverMenu } from './ui/PopoverMenu';
@@ -41,6 +41,21 @@ const OVERSCAN_ROWS = 40;
  * evicted when this is exceeded. 80 chunks * 100 rows ≈ 8k rows resident.
  */
 const MAX_CACHED_CHUNKS = 80;
+/**
+ * Browsers cap the rendered pixel height of a single element. In the Chromium
+ * build backing the VS Code webview that ceiling is 2^24 = 16,777,216px
+ * (elements taller than this are silently clamped, which would map the full
+ * scrollbar onto only part of the data). A naive `totalRows * rowHeight`
+ * scroll surface hits this around ~440k rows at ~38px/row, leaving everything
+ * past it unreachable (issue #10).
+ *
+ * We keep the scroll surface safely under that ceiling and, when the ideal
+ * height exceeds it, compress: DOM scroll is scaled up to a virtual scroll
+ * position so the full result set stays reachable (the scrollbar just becomes
+ * coarser the larger the result). Staying strictly below 2^24 guarantees the
+ * browser never clamps, so the scaled mapping is exact end-to-end.
+ */
+const MAX_SCROLL_SURFACE = 16_000_000;
 
 // ============================================================================
 // RESULTS TABLE - Display component for a single statement's results
@@ -135,7 +150,6 @@ export function ResultsTable({
 
   // ---- Misc UI state ----
   const [showSqlModal, setShowSqlModal] = useState(false);
-  const [showFullSqlModal, setShowFullSqlModal] = useState(false);
   /**
    * Column widths. Keyed by column name. The synthetic key `__rownum__`
    * holds the user-overridden width of the row-number gutter; if absent,
@@ -278,14 +292,48 @@ export function ResultsTable({
 
   // --------------------------------------------------------------------------
   // Compute the visible row range and which chunks back it.
+  //
+  // The scroll surface is capped at MAX_SCROLL_SURFACE so it never exceeds the
+  // browser's max element height (issue #10). When the ideal height
+  // (filteredRowCount * rowHeight) fits under the cap, `scrollScale === 1` and
+  // this is a plain 1:1 virtualization. When it doesn't, the DOM scrollTop is
+  // linearly scaled up to a "virtual" scroll position so every row stays
+  // reachable, and the rendered slice is positioned to track the viewport.
   // --------------------------------------------------------------------------
   const visibleHeight = Math.max(0, viewportHeight - headerHeight);
-  const firstVisible = Math.max(0, Math.floor(scrollTop / rowHeight));
-  const lastVisible = Math.min(filteredRowCount, Math.ceil((scrollTop + visibleHeight) / rowHeight));
-  const renderStart = Math.max(0, firstVisible - OVERSCAN_ROWS);
+  const idealTotalHeight = filteredRowCount * rowHeight;
+  const scrollSurfaceHeight = Math.min(idealTotalHeight, MAX_SCROLL_SURFACE);
+  // The DOM's scrollTop range and the virtual (ideal) scroll range. Their
+  // ratio is the compression factor (>= 1; exactly 1 when not compressed).
+  const domScrollRange = Math.max(1, scrollSurfaceHeight - visibleHeight);
+  const virtualScrollRange = Math.max(0, idealTotalHeight - visibleHeight);
+  const scrollScale = virtualScrollRange / domScrollRange;
+  const virtualScrollTop = Math.min(virtualScrollRange, scrollTop * scrollScale);
+
+  const firstVisible = Math.max(0, Math.floor(virtualScrollTop / rowHeight));
+  const lastVisible = Math.min(
+    filteredRowCount,
+    Math.ceil((virtualScrollTop + visibleHeight) / rowHeight)
+  );
+  // Fractional (sub-row) part of the scroll position at the viewport top.
+  const fractional = virtualScrollTop - firstVisible * rowHeight;
+  // Cap overscan above the first visible row so the top spacer never goes
+  // negative under compression (which would misalign the rendered slice).
+  const aboveCapacity = Math.floor(Math.max(0, scrollTop - fractional) / rowHeight);
+  const overscanAbove = Math.min(OVERSCAN_ROWS, aboveCapacity);
+  const renderStart = Math.max(0, firstVisible - overscanAbove);
   const renderEnd = Math.min(filteredRowCount, lastVisible + OVERSCAN_ROWS);
-  const topSpacerHeight = renderStart * rowHeight;
-  const bottomSpacerHeight = Math.max(0, (filteredRowCount - renderEnd) * rowHeight);
+  // Position the rendered slice at the current scroll position. In the
+  // non-compressed case this reduces exactly to `renderStart * rowHeight`.
+  const renderedHeight = (renderEnd - renderStart) * rowHeight;
+  const topSpacerHeight = Math.max(
+    0,
+    scrollTop - fractional - (firstVisible - renderStart) * rowHeight
+  );
+  const bottomSpacerHeight = Math.max(
+    0,
+    scrollSurfaceHeight - topSpacerHeight - renderedHeight
+  );
 
   // --------------------------------------------------------------------------
   // Helper: build the active where clause from filter state.
@@ -634,14 +682,24 @@ export function ResultsTable({
     getVscodeApi()?.postMessage({ type: 'refreshQuery' });
   }, [isRefreshing]);
 
-  const handleGoToSource = useCallback(() => {
-    getVscodeApi()?.postMessage({ type: 'goToSource' });
-  }, []);
-
-  const handleRunAdHoc = useCallback((nextSql: string) => {
-    setIsRefreshing(true);
-    getVscodeApi()?.postMessage({ type: 'runAdHoc', sql: nextSql });
-  }, []);
+  /**
+   * "Open in Editor" handler — receives whichever SQL the modal is
+   * currently showing.
+   *   - When the user is viewing the source query (`sqlToOpen === sql`),
+   *     post `goToSource`. The host reveals the existing .sql editor tab
+   *     when the panel was opened from a file, or creates a new untitled
+   *     .sql doc otherwise.
+   *   - When the user has the filtered/sorted form displayed, post
+   *     `openAsSql` with that SQL so the host opens an untitled .sql
+   *     doc containing the exact query they're looking at.
+   */
+  const handleOpenInEditor = useCallback((sqlToOpen: string) => {
+    if (sqlToOpen === sql) {
+      getVscodeApi()?.postMessage({ type: 'goToSource' });
+    } else {
+      getVscodeApi()?.postMessage({ type: 'openAsSql', sql: sqlToOpen });
+    }
+  }, [sql]);
 
   // --------------------------------------------------------------------------
   // Selection helpers — operate on absolute row indexes.
@@ -944,20 +1002,10 @@ export function ResultsTable({
       {showSqlModal && (
         <SqlModal
           sql={sql}
+          filteredSql={fullSql !== sql ? fullSql : undefined}
           onClose={() => setShowSqlModal(false)}
           onCopy={(text) => copyToClipboard(text, 'SQL')}
-          onGoToSource={handleGoToSource}
-          onRun={handleRunAdHoc}
-        />
-      )}
-
-      {showFullSqlModal && (
-        <SqlModal
-          sql={fullSql}
-          onClose={() => setShowFullSqlModal(false)}
-          onCopy={(text) => copyToClipboard(text, 'SQL')}
-          onRun={handleRunAdHoc}
-          title="View Query"
+          onOpenInEditor={handleOpenInEditor}
         />
       )}
 
@@ -1023,16 +1071,6 @@ export function ResultsTable({
               <span className="stat-label">selected</span>
               <span className="stat-value">{selectionInfo}</span>
             </div>
-          )}
-          {(sort.column || (filterState.filters.length > 0 && !filterState.isPaused)) && (
-            <button
-              className="stat stat-clickable stat-sql"
-              onClick={() => setShowFullSqlModal(true)}
-              title="View current query with filters and sort"
-            >
-              <Code size={12} />
-              <span className="stat-label">SQL</span>
-            </button>
           )}
         </div>
       )}

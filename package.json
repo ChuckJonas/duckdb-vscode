@@ -2,7 +2,7 @@
   "name": "duckdb",
   "displayName": "DuckDB",
   "description": "A DuckDB client for VS Code — query CSV, Parquet, JSON, and Excel files directly",
-  "version": "0.0.26",
+  "version": "0.0.27",
   "publisher": "chuckjonas",
   "icon": "resources/icon.png",
   "repository": {
@@ -953,7 +953,7 @@
     "typescript-eslint": "^8.52.0"
   },
   "dependencies": {
-    "@duckdb/node-api": "^1.5.2-r.1",
+    "@duckdb/node-api": "^1.5.3-r.2",
     "fzf": "^0.5.2",
     "lucide-react": "^0.563.0",
     "react": "^19.2.3",

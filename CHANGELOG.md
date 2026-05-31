@@ -6,6 +6,19 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## Unreleased
 
+## [0.0.27] - 2026-05-31
+
+### Changed
+- **SQL preview modals are read-only again; editing happens in a real editor.** The in-panel SQL editor introduced in 0.0.26 is removed — the "View SQL" / "SQL Preview" modal is now a syntax-highlighted, read-only preview. Use **Open in Editor** (or **Go to Source File**) to edit the query in a first-class SQL editor with highlighting, completion, and error reporting. The separate filtered/sorted "View Query" modal is folded into the single SQL modal behind an **Apply filters & sort** toggle (shown only when a filter or sort is active), and the standalone "SQL" badge in the stats bar is removed.
+- **Running a query opened from the data viewer reuses its panel.** When you "Open in Editor" from a file or table overview and run the resulting SQL, the results now replace the originating viewer panel instead of spawning a separate results tab.
+- Bumped `@duckdb/node-api` from `1.5.2-r.1` to `1.5.3-r.2` (DuckDB engine v1.5.3).
+
+### Fixed
+- **Infinite scroll could not reach rows past ~883k** in large results ([#10](https://github.com/ChuckJonas/duckdb-vscode/issues/10)). The virtualized scroll surface exceeded the browser's maximum element height (2^24 px), clamping everything beyond it out of reach. The surface is now capped below that ceiling and scaled, so every row in multi-million-row results is reachable. Below ~420k rows scrolling is unchanged (1:1); above it the scrollbar maps proportionally onto the full result set. Also disabled browser scroll anchoring on the results viewport to prevent a scroll feedback loop.
+- **Editing the query inline in the results panel did not update the view** and reset the horizontal scroll position ([#12](https://github.com/ChuckJonas/duckdb-vscode/issues/12)). Inline query editing is removed in favor of editing in a real SQL editor, which eliminates both the stale-view and scroll-reset behavior.
+
+## [0.0.26] - 2026-05-20
+
 ### Added
 - **Editable SQL modal** — every "View SQL" / "SQL Preview" modal is now a SQL editor: tweak the query and press ⌘↵ / Ctrl+↵ to run it in place. Works for the file overview preview, the original-query modal in the results table, and the filtered/sorted full-query modal. "Open in Editor" now uses the edited text. Tab inserts spaces.
 - New `duckdb.fileViewer.openMode` setting (`data` | `schema`, default `schema`) and `duckdb.fileViewer.openRowLimit` (default `0` = unlimited). Set `openMode` to `"data"` to jump straight into rows on file open — useful for smaller files or when you prefer immediate data access.
