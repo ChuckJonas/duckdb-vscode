@@ -235,18 +235,12 @@ export function FileOverview({ metadata, onBackToContainer }: FileOverviewProps)
     });
   }, [selectedColumnNames, noneSelected]);
 
-  const handleOpenAsSql = useCallback((sql?: string) => {
+  const handleOpenAsSql = useCallback((sql: string) => {
     const vscode = getVscodeApi();
     vscode.postMessage({
       type: 'openAsSql',
-      columns: selectedColumnNames,
       sql,
     });
-  }, [selectedColumnNames]);
-
-  const handleRunAdHoc = useCallback((sql: string) => {
-    const vscode = getVscodeApi();
-    vscode.postMessage({ type: 'runAdHoc', sql });
   }, []);
 
   const handleCopySql = useCallback((text: string) => {
@@ -451,14 +445,14 @@ export function FileOverview({ metadata, onBackToContainer }: FileOverviewProps)
         </code>
       </div>
 
-      {/* SQL Modal — editable; ⌘↵ runs the (possibly modified) query */}
+      {/* SQL Preview — read-only; "Open in Editor" hands off to an
+          untitled .sql doc for actual editing. */}
       {showSqlModal && (
         <SqlModal
           sql={sqlPreview}
           onClose={() => setShowSqlModal(false)}
           onCopy={handleCopySql}
           onOpenInEditor={handleOpenAsSql}
-          onRun={handleRunAdHoc}
           title="SQL Preview"
         />
       )}

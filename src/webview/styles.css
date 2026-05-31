@@ -763,6 +763,15 @@ body {
 .table-wrapper {
   flex: 1;
   overflow: auto;
+  /*
+   * Disable browser scroll anchoring. The virtualized table repositions its
+   * rendered rows on every scroll (the spacer heights track scrollTop in the
+   * compressed, >33M-px regime). With anchoring enabled the browser nudges
+   * scrollTop to "preserve" the shifting content, which feeds back into the
+   * repositioning and causes runaway scrolling ("rows ticking up" that never
+   * reaches the bottom). See issue #10.
+   */
+  overflow-anchor: none;
 }
 
 /* Table */
@@ -1308,6 +1317,18 @@ tr.row-selected td.row-number {
   margin: 0;
 }
 
+/* Toggle bar inside the SQL modal — only rendered when a filtered/sorted
+   form of the query exists, so users can flip between "source" and
+   "as actually executed" views. */
+.sql-modal-toggle-bar {
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: var(--space-sm) var(--space-lg);
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-secondary);
+}
+
 /* Editable cell textarea (cell expansion modal in edit mode) */
 .modal-cell-editor {
   font-family: var(--font-mono);
@@ -1361,29 +1382,6 @@ tr.row-selected td.row-number {
 
 @keyframes cell-modal-spin {
   to { transform: rotate(360deg); }
-}
-
-/* Editable SQL textarea — inherits modal-content sizing */
-.modal-sql-editor {
-  font-family: var(--font-mono);
-  font-size: var(--font-size-base);
-  line-height: 1.6;
-  background: var(--bg-primary);
-  color: var(--text-primary);
-  border: 1px solid var(--border);
-  border-radius: 4px;
-  padding: var(--space-md);
-  resize: vertical;
-  width: 100%;
-  outline: none;
-  white-space: pre;
-  overflow: auto;
-  min-height: 120px;
-  tab-size: 2;
-}
-
-.modal-sql-editor:focus {
-  border-color: var(--accent-blue);
 }
 
 /* JSON syntax highlighting in modal */
@@ -1711,22 +1709,6 @@ button.stat-clickable.active {
 button.stat-clickable.active .stat-label,
 button.stat-clickable.active .stat-value {
   color: var(--bg-primary);
-}
-
-/* SQL button in stats bar */
-.stat-sql {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.stat-sql svg {
-  color: var(--text-muted);
-}
-
-.stat-sql:hover svg {
-  color: var(--accent-cyan);
 }
 
 /* ========================================

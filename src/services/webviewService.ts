@@ -23,6 +23,40 @@ interface PanelState {
 
 const resultPanels = new Map<string, PanelState>();
 
+/**
+ * A linked "ad-hoc" SQL editor: an untitled .sql doc spawned via the
+ * overview panel's "Open in Editor" action. Running such a doc routes
+ * its results back into the originating overview panel (a custom-editor
+ * webview) instead of spawning a separate results panel.
+ */
+interface AdHocEditorTarget {
+  panel: vscode.WebviewPanel;
+  display: (
+    result: MultiQueryResultWithPages,
+    pageSize: number,
+    maxCopyRows: number
+  ) => void;
+}
+
+// Keyed by the editor document URI string (e.g. "untitled:Untitled-1").
+const adHocEditorLinks = new Map<string, AdHocEditorTarget>();
+
+/**
+ * Link an editor doc to the overview panel it was spawned from, so that
+ * running the doc displays its results inside that panel.
+ */
+export function linkAdHocEditor(
+  docUri: string,
+  target: AdHocEditorTarget
+): void {
+  adHocEditorLinks.set(docUri, target);
+}
+
+/** Remove a previously-registered ad-hoc editor link. */
+export function unlinkAdHocEditor(docUri: string): void {
+  adHocEditorLinks.delete(docUri);
+}
+
 // Track the currently active results panel for "Go to Source" command
 let activeResultsSourceUri: vscode.Uri | undefined;
 let activeResultsQueries: string[] = [];
@@ -67,6 +101,23 @@ export function showResultsPanel(
   pageSize: number,
   maxCopyRows: number
 ): void {
+  // If this run came from an editor that was spawned by an overview
+  // panel's "Open in Editor", route the result back into that panel
+  // instead of creating a separate results panel.
+  if (sourceId) {
+    const link = adHocEditorLinks.get(sourceId);
+    if (link) {
+      try {
+        link.display(result, pageSize, maxCopyRows);
+        return;
+      } catch {
+        // The linked panel was disposed; drop the stale link and fall
+        // through to the normal results-panel flow.
+        adHocEditorLinks.delete(sourceId);
+      }
+    }
+  }
+
   // If no statement produces tabular results (all DDL/DML), skip the panel.
   // Show a subtle status bar message as fallback for call sites without an editor
   // (e.g. history re-run). Call sites with an editor show inline decorations instead.
@@ -405,15 +456,8 @@ function setupMessageHandler(
           await handleRefreshQuery(panel, sourceId, pageSize, maxCopyRows, db);
           break;
 
-        case "runAdHoc":
-          await handleRunAdHoc(
-            panel,
-            sourceId,
-            message.sql,
-            pageSize,
-            maxCopyRows,
-            db
-          );
+        case "openAsSql":
+          await handleOpenAsSql(message.sql);
           break;
 
         case "goToSource":
@@ -708,53 +752,23 @@ async function handleRefreshQuery(
 }
 
 /**
- * Handle 'runAdHoc' message - execute SQL edited in the SQL modal,
- * replacing the current results in this panel. The new SQL becomes
- * the panel's stored query, so subsequent refreshes re-run it.
+ * Handle 'openAsSql' message — drop the user into a new untitled .sql
+ * editor pre-filled with the provided SQL. Used by the "View Query"
+ * modal in ResultsTable so a user can pick up the current query
+ * (including UI filters / sort) and keep iterating on it in a real
+ * editor instead of a textarea inside the webview.
  */
-async function handleRunAdHoc(
-  panel: vscode.WebviewPanel,
-  sourceId: string | undefined,
-  sql: unknown,
-  pageSize: number,
-  maxCopyRows: number,
-  db: ReturnType<typeof getDuckDBService>
-): Promise<void> {
-  if (typeof sql !== "string" || !sql.trim()) return;
-
-  const currentState = sourceId ? resultPanels.get(sourceId) ?? null : null;
-
-  try {
-    if (currentState) {
-      for (const cacheId of currentState.cacheIds) {
-        db.dropCache(cacheId).catch(() => {});
-      }
-    }
-
-    const result = await db.executeQuery(sql, pageSize);
-
-    if (currentState) {
-      const newCacheIds = collectCacheIds(result);
-      currentState.cacheIds = newCacheIds;
-      currentState.currentResult = result;
-      currentState.sortColumn = undefined;
-      currentState.sortDirection = undefined;
-      currentState.queries = result.statements.map((s) => s.meta.sql);
-      panel.title = buildPanelTitle(result);
-    }
-
-    panel.webview.postMessage({
-      type: "queryResult",
-      data: result,
-      pageSize,
-      maxCopyRows,
-    });
-  } catch (error) {
-    panel.webview.postMessage({
-      type: "refreshError",
-      error: String(error),
-    });
+async function handleOpenAsSql(sql: unknown): Promise<void> {
+  if (typeof sql !== "string" || !sql.trim()) {
+    return;
   }
+  const doc = await vscode.workspace.openTextDocument({
+    content: sql,
+    language: "sql",
+  });
+  await vscode.window.showTextDocument(doc, {
+    viewColumn: vscode.ViewColumn.Beside,
+  });
 }
 
 // ============================================================================
