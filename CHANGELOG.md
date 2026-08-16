@@ -6,6 +6,12 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## Unreleased
 
+### Added
+- **`.duckdb` / `.ddb` files open as a database overview.** Opening a database file attaches it (read-only when the file allows it) and lists its tables and views with row/column counts; picking one shows the usual schema/data view and generates catalog-qualified SQL. The attachment is reused when the Database Explorer already holds one, and is detached when the last editor for the file closes. New `duckdb.fileViewer.database` setting (default `true`) controls the automatic editor association.
+
+### Fixed
+- **Previewing a `.duckdb` file failed with a nonsense catalog error** such as `No files found that match the pattern "home.data.my.duckdb"` or `Catalog "home" does not exist!`. The DuckDB Table Viewer accepts any filename in **Open With…**, and it was parsing the file's path segments as `catalog/schema/table`. It now hands real files to the DuckDB Data Viewer instead of binding a filesystem path as a qualified table name.
+
 ## [0.0.27] - 2026-05-31
 
 ### Changed

@@ -36,6 +36,7 @@ Performance Note: When you execute a query, the extension creates a temporary ta
 
 - **Auto-open data files** — `.parquet`, `.csv`/`.tsv`, and `.xlsx` files open directly in the DuckDB data viewer with full pagination, sorting, filtering, and export. No more "binary file" errors for Parquet!
 - **Excel support** — `.xlsx` workbooks with multiple sheets show a sheet picker with column previews; click any sheet to explore it. The DuckDB `excel` extension is auto-installed on first use.
+- **Database files** — `.duckdb`/`.ddb` files open as a table picker: the file is attached (read-only when possible), its tables and views are listed with row/column counts, and the attachment is dropped when the last editor for the file closes.
 - **JSON/JSONL support** — `.json`, `.jsonl`, and `.ndjson` available via **right-click → Open With… → DuckDB Data Viewer**
 - **Configurable** — Each file type can be toggled via `duckdb.fileViewer.*` settings
 - **Right-click to query** — Select files in Explorer → "DuckDB: Query File" to open a SQL editor with `SELECT * FROM '{file}'`
@@ -194,6 +195,10 @@ Automatically open `.jsonl` and `.ndjson` files with the DuckDB data viewer (def
 #### `duckdb.fileViewer.excel`
 
 Automatically open `.xlsx` files with the DuckDB data viewer (default: `true`). For workbooks with multiple sheets, a sheet picker is shown first. Requires the DuckDB `excel` extension, which is auto-installed on first use.
+
+#### `duckdb.fileViewer.database`
+
+Automatically open `.duckdb` and `.ddb` database files with the DuckDB data viewer (default: `true`). The file is attached (read-only when the file allows it) and its tables and views are listed; opening one shows the usual schema/data view. An attachment already held by the Database Explorer is reused, and one created by the viewer is detached when the last editor for the file closes.
 
 #### `duckdb.fileViewer.openMode`
 
