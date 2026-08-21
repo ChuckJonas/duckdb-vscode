@@ -2,32 +2,51 @@
  * Zero-dependency xlsx sheet name reader.
  *
  * An .xlsx file is a ZIP archive containing XML. Sheet names live in
- * `xl/workbook.xml` inside a <sheets> element. We parse the ZIP central
- * directory to locate that single entry, decompress it with Node's built-in
- * zlib, and regex-extract the sheet names. No npm packages required.
+ * `xl/workbook.xml` inside a <sheets> element. OOXML producers may use either
+ * the default SpreadsheetML namespace or an arbitrary namespace prefix on
+ * those elements. We parse the ZIP central directory to locate that single
+ * entry, decompress it with Node's built-in zlib, and extract sheet names
+ * without depending on a particular prefix. No npm packages required.
  */
 import * as fs from "fs";
 import * as zlib from "zlib";
 
 /**
  * Extract sheet names from an .xlsx file by reading its ZIP structure.
- * Returns sheet names in workbook order. Falls back to ["Sheet1"] on error.
+ * Returns sheet names in workbook order. Returns an empty array when the
+ * workbook metadata cannot be read; callers can then let DuckDB select the
+ * first sheet rather than guessing that it is named "Sheet1".
  */
 export function getXlsxSheetNames(filePath: string): string[] {
   try {
     const buf = fs.readFileSync(filePath);
     const xml = readZipEntry(buf, "xl/workbook.xml");
-    if (!xml) return ["Sheet1"];
-
-    const sheetsBlock = xml.match(/<sheets>([\s\S]*?)<\/sheets>/)?.[1] ?? "";
-    const names: string[] = [];
-    for (const m of sheetsBlock.matchAll(/\bname="([^"]+)"/g)) {
-      names.push(decodeXmlEntities(m[1]));
-    }
-    return names.length > 0 ? names : ["Sheet1"];
+    return xml ? parseWorkbookSheetNames(xml) : [];
   } catch {
-    return ["Sheet1"];
+    return [];
   }
+}
+
+/** Extract sheet names from workbook.xml without assuming a namespace prefix. */
+export function parseWorkbookSheetNames(xml: string): string[] {
+  const prefix = "(?:[A-Za-z_][\\w.-]*:)?";
+  const sheetsPattern = new RegExp(
+    `<${prefix}sheets\\b[^>]*>([\\s\\S]*?)<\\/${prefix}sheets\\s*>`
+  );
+  const sheetsBlock = xml.match(sheetsPattern)?.[1];
+  if (!sheetsBlock) {
+    return [];
+  }
+
+  const sheetPattern = new RegExp(
+    `<${prefix}sheet\\b[^>]*\\bname\\s*=\\s*(?:"([^"]*)"|'([^']*)')`,
+    "g"
+  );
+  const names: string[] = [];
+  for (const match of sheetsBlock.matchAll(sheetPattern)) {
+    names.push(decodeXmlEntities(match[1] ?? match[2] ?? ""));
+  }
+  return names;
 }
 
 function decodeXmlEntities(s: string): string {

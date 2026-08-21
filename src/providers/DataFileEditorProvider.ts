@@ -9,7 +9,10 @@
  */
 import * as vscode from "vscode";
 import * as path from "path";
-import { getDuckDBService } from "../services/duckdb";
+import {
+  buildReadXlsxSource,
+  getDuckDBService,
+} from "../services/duckdb";
 import { installAndLoadExtension } from "../services/extensionsService";
 import { getXlsxSheetNames } from "../services/xlsxSheetReader";
 import {
@@ -158,9 +161,11 @@ export class DataFileEditorProvider
 
     const sheetNames = getXlsxSheetNames(document.uri.fsPath);
 
-    // Single sheet: use the standard single-table flow
+    // Zero or one discovered sheet: use the standard single-table flow. If
+    // discovery failed, omit the sheet argument and let DuckDB read the real
+    // first sheet instead of assuming that it is named "Sheet1".
     if (sheetNames.length <= 1) {
-      const sheetName = sheetNames[0] || "Sheet1";
+      const sheetName = sheetNames[0];
       const source = this.buildExcelSheetSource(
         filePath,
         fileName,
@@ -229,7 +234,7 @@ export class DataFileEditorProvider
   private buildExcelSheetSource(
     filePath: string,
     displayName: string,
-    sheetName: string,
+    sheetName: string | undefined,
     documentUri: vscode.Uri,
     db: ReturnType<typeof getDuckDBService>
   ): OverviewDataSource {
@@ -258,13 +263,11 @@ export class DataFileEditorProvider
       },
 
       buildSelectSql(columns?: string[], limit?: number): string {
-        const escapedPath = filePath.replace(/'/g, "''");
-        const escapedSheet = sheetName.replace(/'/g, "''");
         const colList =
           columns && columns.length > 0
             ? columns.map((c) => `"${c}"`).join(", ")
             : "*";
-        let sql = `SELECT ${colList} FROM read_xlsx('${escapedPath}', sheet = '${escapedSheet}', ignore_errors = true)`;
+        let sql = `SELECT ${colList} FROM ${buildReadXlsxSource(filePath, sheetName)}`;
         if (limit) {
           sql += ` LIMIT ${limit}`;
         }

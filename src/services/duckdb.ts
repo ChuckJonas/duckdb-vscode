@@ -140,6 +140,22 @@ export function buildQueryFileSql(filePath: string): string {
   return `SELECT * FROM '${escapedPath}'`;
 }
 
+/**
+ * Build a DuckDB read_xlsx source. When sheet is omitted, DuckDB reads the
+ * workbook's first sheet instead of relying on a guessed sheet name.
+ */
+export function buildReadXlsxSource(
+  filePath: string,
+  sheet?: string
+): string {
+  const escapedPath = filePath.replace(/'/g, "''");
+  const sheetArgument =
+    sheet === undefined
+      ? ""
+      : `, sheet = '${sheet.replace(/'/g, "''")}'`;
+  return `read_xlsx('${escapedPath}'${sheetArgument}, ignore_errors = true)`;
+}
+
 // ============================================================================
 // ERROR TYPES AND PARSING
 // ============================================================================
@@ -1736,22 +1752,16 @@ export class DuckDBService {
   // EXCEL SHEET METADATA (per-sheet queries using read_xlsx)
   // ============================================================================
 
-  private buildReadXlsx(filePath: string, sheet: string): string {
-    const escapedPath = filePath.replace(/'/g, "''");
-    const escapedSheet = sheet.replace(/'/g, "''");
-    return `read_xlsx('${escapedPath}', sheet = '${escapedSheet}', ignore_errors = true)`;
-  }
-
   async getExcelSheetMetadata(
     filePath: string,
-    sheet: string
+    sheet?: string
   ): Promise<{ columns: { name: string; type: string }[]; rowCount: number }> {
     await this.initialize();
     if (!this.connection) {
       throw new Error("DuckDB connection not available");
     }
 
-    const src = this.buildReadXlsx(filePath, sheet);
+    const src = buildReadXlsxSource(filePath, sheet);
     const [describeResult, countResult] = await Promise.all([
       this.connection.runAndReadAll(`DESCRIBE SELECT * FROM ${src}`),
       this.connection.runAndReadAll(`SELECT COUNT(*) as cnt FROM ${src}`),
@@ -1767,7 +1777,7 @@ export class DuckDBService {
 
   async getExcelSheetSummaries(
     filePath: string,
-    sheet: string
+    sheet?: string
   ): Promise<
     Array<{
       name: string;
@@ -1781,7 +1791,7 @@ export class DuckDBService {
       throw new Error("DuckDB connection not available");
     }
 
-    const src = this.buildReadXlsx(filePath, sheet);
+    const src = buildReadXlsxSource(filePath, sheet);
     try {
       const reader = await this.connection.runAndReadAll(
         `SUMMARIZE SELECT * FROM ${src}`
@@ -1801,7 +1811,7 @@ export class DuckDBService {
 
   async getExcelSheetColumnStats(
     filePath: string,
-    sheet: string,
+    sheet: string | undefined,
     column: string
   ): Promise<ColumnStats> {
     await this.initialize();
@@ -1809,7 +1819,7 @@ export class DuckDBService {
       throw new Error("DuckDB connection not available");
     }
 
-    const src = this.buildReadXlsx(filePath, sheet);
+    const src = buildReadXlsxSource(filePath, sheet);
     const escapedCol = `"${column}"`;
 
     const basicSql = `
