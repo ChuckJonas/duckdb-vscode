@@ -17,6 +17,8 @@ interface QueryPanelProps {
   result: MultiQueryResultWithPages;
   pageSize: number;
   maxCopyRows: number;
+  /** Max depth for expanding STRUCT columns into nested sub-columns. */
+  nestedColumnMaxDepth?: number;
   /** When true, cell-edit-with-save is enabled in the results table. */
   editable?: boolean;
   onBackToOverview?: () => void;
@@ -26,7 +28,7 @@ interface QueryPanelProps {
  * QueryPanel - Top-level component for displaying query results
  * Handles the distinction between single and multi-statement results
  */
-export function QueryPanel({ result, pageSize, maxCopyRows, editable = false, onBackToOverview }: QueryPanelProps) {
+export function QueryPanel({ result, pageSize, maxCopyRows, nestedColumnMaxDepth = 2, editable = false, onBackToOverview }: QueryPanelProps) {
   // For multi-statement with more than one statement, render collapsible container.
   // Multi-statement is never editable (we don't track which cache the edit
   // belongs to per-statement).
@@ -37,6 +39,7 @@ export function QueryPanel({ result, pageSize, maxCopyRows, editable = false, on
         totalExecutionTime={result.totalExecutionTime}
         pageSize={pageSize}
         maxCopyRows={maxCopyRows}
+        nestedColumnMaxDepth={nestedColumnMaxDepth}
       />
     );
   }
@@ -62,6 +65,7 @@ export function QueryPanel({ result, pageSize, maxCopyRows, editable = false, on
         initialPage={stmt.page}
         pageSize={pageSize}
         maxCopyRows={maxCopyRows}
+        nestedColumnMaxDepth={nestedColumnMaxDepth}
         editable={editable}
         hasResults={stmt.meta.hasResults}
         isCollapsible={false}
@@ -80,6 +84,7 @@ interface MultiStatementContainerProps {
   totalExecutionTime: number;
   pageSize: number;
   maxCopyRows: number;
+  nestedColumnMaxDepth: number;
 }
 
 function MultiStatementContainer({ 
@@ -87,6 +92,7 @@ function MultiStatementContainer({
   totalExecutionTime,
   pageSize,
   maxCopyRows,
+  nestedColumnMaxDepth,
 }: MultiStatementContainerProps) {
   // Refresh state
   const [isRefreshing, setIsRefreshing] = useState(false);
@@ -209,6 +215,7 @@ function MultiStatementContainer({
             initialPage={stmt.page}
             pageSize={pageSize}
             maxCopyRows={maxCopyRows}
+            nestedColumnMaxDepth={nestedColumnMaxDepth}
             hasResults={stmt.meta.hasResults}
             statementIndex={idx}
             totalStatements={visibleStatements.length}

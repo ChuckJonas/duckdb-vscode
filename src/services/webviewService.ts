@@ -9,13 +9,15 @@ import {
   collectCacheIds,
   MultiQueryResultWithPages,
 } from "./duckdb";
+import { type ColumnRef, columnRefLabel } from "../shared/columnRef";
 
 // Track result panels by source document
 interface PanelState {
   panel: vscode.WebviewPanel;
   cacheIds: string[]; // Cache IDs for cleanup
   currentResult: MultiQueryResultWithPages;
-  sortColumn?: string;
+  /** Top-level column name, or a STRUCT field path (e.g. ["s", "x"]). */
+  sortColumn?: ColumnRef;
   sortDirection?: "asc" | "desc";
   sourceUri?: vscode.Uri; // URI of the source document for "Go to Source"
   queries: string[]; // SQL queries for creating new editor when no source
@@ -64,6 +66,17 @@ let activeResultsQueries: string[] = [];
 // ============================================================================
 // Public API
 // ============================================================================
+
+/**
+ * Read the configured max depth for expanding STRUCT columns into nested
+ * sub-columns in the results table. Read at post time so setting changes
+ * apply to the next query without a reload.
+ */
+export function getNestedColumnMaxDepth(): number {
+  const config = vscode.workspace.getConfiguration("duckdb");
+  const depth = config.get<number>("nestedColumnMaxDepth", 2);
+  return Math.max(0, Math.min(10, Math.floor(depth)));
+}
 
 /**
  * Parse sourceId into a URI if possible
@@ -303,6 +316,7 @@ function tryReuseExistingPanel(
       data: result,
       pageSize,
       maxCopyRows,
+      nestedColumnMaxDepth: getNestedColumnMaxDepth(),
     });
 
     return true;
@@ -415,7 +429,9 @@ function setupMessageHandler(
 ): void {
   panel.webview.onDidReceiveMessage(
     async (message) => {
-      const currentState = sourceId ? resultPanels.get(sourceId) ?? null : null;
+      const currentState = sourceId
+        ? (resultPanels.get(sourceId) ?? null)
+        : null;
 
       switch (message.type) {
         case "ready":
@@ -484,6 +500,7 @@ function handleReady(
     data: result,
     pageSize,
     maxCopyRows,
+    nestedColumnMaxDepth: getNestedColumnMaxDepth(),
   });
 }
 
@@ -495,7 +512,7 @@ async function handleRequestPage(
   message: {
     cacheId: string;
     offset: number;
-    sortColumn?: string;
+    sortColumn?: ColumnRef;
     sortDirection?: "asc" | "desc";
     whereClause?: string;
     requestVersion?: number;
@@ -544,10 +561,13 @@ async function handleRequestPage(
  */
 async function handleRequestDistinctValues(
   panel: vscode.WebviewPanel,
-  message: { cacheId: string; column: string; searchTerm?: string },
+  message: { cacheId: string; column: ColumnRef; searchTerm?: string },
   db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
   const { cacheId, column, searchTerm } = message;
+  // Echo the dotted label so the webview can match the response to the
+  // leaf column that requested it.
+  const label = columnRefLabel(column);
 
   try {
     const [distinctValues, cardinality] = await Promise.all([
@@ -558,7 +578,7 @@ async function handleRequestDistinctValues(
     panel.webview.postMessage({
       type: "distinctValues",
       cacheId,
-      column,
+      column: label,
       data: distinctValues,
       cardinality,
     });
@@ -567,7 +587,7 @@ async function handleRequestDistinctValues(
     panel.webview.postMessage({
       type: "distinctValues",
       cacheId,
-      column,
+      column: label,
       data: [],
       cardinality: 0,
     });
@@ -579,7 +599,7 @@ async function handleRequestDistinctValues(
  */
 async function handleRequestColumnStats(
   panel: vscode.WebviewPanel,
-  message: { cacheId: string; column: string; whereClause?: string },
+  message: { cacheId: string; column: ColumnRef; whereClause?: string },
   db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
   const { cacheId, column, whereClause } = message;
@@ -596,7 +616,7 @@ async function handleRequestColumnStats(
     panel.webview.postMessage({
       type: "columnStats",
       cacheId,
-      column,
+      column: columnRefLabel(column),
       data: null,
       error: String(error),
     });
@@ -674,7 +694,10 @@ async function handleRequestColumnSummaries(
   const { cacheId } = message;
 
   try {
-    const summaries = await db.getCacheColumnSummaries(cacheId);
+    const summaries = await db.getCacheColumnSummaries(
+      cacheId,
+      getNestedColumnMaxDepth(),
+    );
     panel.webview.postMessage({
       type: "columnSummaries",
       cacheId,
@@ -702,7 +725,7 @@ async function handleRefreshQuery(
   maxCopyRows: number,
   db: ReturnType<typeof getDuckDBService>
 ): Promise<void> {
-  const currentState = sourceId ? resultPanels.get(sourceId) ?? null : null;
+  const currentState = sourceId ? (resultPanels.get(sourceId) ?? null) : null;
 
   if (!currentState) {
     panel.webview.postMessage({
@@ -741,6 +764,7 @@ async function handleRefreshQuery(
       data: result,
       pageSize,
       maxCopyRows,
+      nestedColumnMaxDepth: getNestedColumnMaxDepth(),
     });
   } catch (error) {
     console.error("🦆 Failed to refresh query:", error);
@@ -783,7 +807,7 @@ export async function handleExport(
   cacheId: string,
   format: "csv" | "parquet" | "json" | "jsonl" | "csv-tab" | "json-tab",
   maxRows: number,
-  sortColumn?: string,
+  sortColumn?: ColumnRef,
   sortDirection?: "asc" | "desc"
 ): Promise<void> {
   // Handle "Open in Editor" formats (has row limit since it loads into memory)
@@ -804,7 +828,7 @@ async function openInEditor(
   cacheId: string,
   format: "csv-tab" | "json-tab",
   maxRows: number,
-  sortColumn?: string,
+  sortColumn?: ColumnRef,
   sortDirection?: "asc" | "desc"
 ): Promise<void> {
   try {
@@ -883,7 +907,7 @@ async function exportToFile(
   db: ReturnType<typeof getDuckDBService>,
   cacheId: string,
   format: "csv" | "parquet" | "json" | "jsonl",
-  sortColumn?: string,
+  sortColumn?: ColumnRef,
   sortDirection?: "asc" | "desc"
 ): Promise<void> {
   const extensions: Record<string, { ext: string; name: string }> = {

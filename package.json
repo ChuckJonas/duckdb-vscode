@@ -711,6 +711,13 @@
           "maximum": 10000,
           "description": "Rows fetched per chunk when the results table loads more rows during infinite scroll."
         },
+        "duckdb.nestedColumnMaxDepth": {
+          "type": "number",
+          "default": 2,
+          "minimum": 0,
+          "maximum": 10,
+          "description": "Maximum depth to expand STRUCT columns into nested sub-columns in the results table. 0 renders structs as JSON values in a single column."
+        },
         "duckdb.maxCopyRows": {
           "type": "number",
           "default": 50000,

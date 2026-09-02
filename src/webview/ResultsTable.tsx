@@ -1,4 +1,11 @@
-import React, { useState, useMemo, useRef, useCallback, useEffect, useLayoutEffect } from 'react';
+import React, {
+  useState,
+  useMemo,
+  useRef,
+  useCallback,
+  useEffect,
+  useLayoutEffect,
+} from "react";
 import type { ColumnStats, StatementCacheMeta, PageData } from './types';
 import { ColumnsPanel } from './ColumnsPanel';
 import { Modal } from './ui/Modal';
@@ -15,7 +22,30 @@ import {
 } from './ui/FilterBar';
 import { ColumnFilterPopover } from './ui/ColumnFilterPopover';
 import { formatValue, formatTableAsText } from './utils/format';
-import { Copy, Download, ExternalLink, ChevronDown, Filter, BarChart2, ArrowUp, ArrowDown, ChevronsUpDown, RefreshCw, Save } from 'lucide-react';
+import {
+  buildNestedColumns,
+  getValueAtPath,
+  type HeaderCell,
+  type LeafColumn,
+} from "../shared/nestedColumns";
+import {
+  type ColumnRef,
+  columnRefLabel,
+  quoteColumnRef,
+} from "../shared/columnRef";
+import {
+  Copy,
+  Download,
+  ExternalLink,
+  ChevronDown,
+  Filter,
+  BarChart2,
+  ArrowUp,
+  ArrowDown,
+  ChevronsUpDown,
+  RefreshCw,
+  Save,
+} from "lucide-react";
 import { CopyButton } from './ui/CopyButton';
 import { IconButton } from './ui/IconButton';
 import { PopoverMenu } from './ui/PopoverMenu';
@@ -25,7 +55,9 @@ import './styles.css';
 
 // Get VS Code API (exposed globally from index.tsx)
 function getVscodeApi() {
-  return (window as unknown as { vscodeApi: { postMessage: (msg: unknown) => void } }).vscodeApi;
+  return (
+    window as unknown as { vscodeApi: { postMessage: (msg: unknown) => void } }
+  ).vscodeApi;
 }
 
 // ============================================================================
@@ -68,6 +100,11 @@ export interface ResultsTableProps {
   pageSize: number;
   maxCopyRows: number;
   /**
+   * Max depth to expand STRUCT columns into nested sub-columns (grouped
+   * header). 0 renders structs as JSON in a single column.
+   */
+  nestedColumnMaxDepth?: number;
+  /**
    * When true, the cell expansion modal exposes a Save button that persists
    * edits back to the source. Only set by the host when the cache is the
    * full unbounded source and the format supports DuckDB COPY write-back.
@@ -89,6 +126,7 @@ export function ResultsTable({
   initialPage,
   pageSize,
   maxCopyRows,
+  nestedColumnMaxDepth = 2,
   editable = false,
   hasResults = true,
   statementIndex,
@@ -99,35 +137,58 @@ export function ResultsTable({
 }: ResultsTableProps) {
   const { cacheId, sql, columns, columnTypes, totalRows, executionTime } = meta;
 
+  // Expand STRUCT columns into nested leaf columns with a grouped header.
+  const nested = useMemo(
+    () => buildNestedColumns(columns, columnTypes, nestedColumnMaxDepth),
+    [columns, columnTypes, nestedColumnMaxDepth],
+  );
+  const leaves = nested.leaves;
+
   // ---- Sort / filter state ----
-  const [sort, setSort] = useState<{ column: string | null; direction: SortDirection }>({
-    column: initialPage.sortColumn || null,
+  // `column` is the dotted leaf label (e.g. "s.x"); `path` is the SQL
+  // column reference sent to the host.
+  const [sort, setSort] = useState<{
+    column: string | null;
+    path: ColumnRef | null;
+    direction: SortDirection;
+  }>({
+    column: initialPage.sortColumn
+      ? columnRefLabel(initialPage.sortColumn)
+      : null,
+    path: initialPage.sortColumn ?? null,
     direction: initialPage.sortDirection || null,
   });
-  const [filterState, setFilterState] = useState<FilterState>(createInitialFilterState());
+  const [filterState, setFilterState] = useState<FilterState>(
+    createInitialFilterState(),
+  );
   const [filteredRowCount, setFilteredRowCount] = useState<number>(totalRows);
   const [filterPopover, setFilterPopover] = useState<{
     column: string;
+    columnPath: ColumnRef;
     columnType: string;
     position: { top: number; left: number };
   } | null>(null);
-  const [distinctValues, setDistinctValues] = useState<{ value: string; count: number }[]>([]);
+  const [distinctValues, setDistinctValues] = useState<
+    { value: string; count: number }[]
+  >([]);
   const [columnCardinality, setColumnCardinality] = useState<number>(0);
   const [loadingDistinct, setLoadingDistinct] = useState(false);
 
   // ---- Virtualized chunk cache ----
   // Map<chunkIndex, rows[]> — chunk i covers rows [i*pageSize .. i*pageSize + pageSize - 1].
-  const [chunks, setChunks] = useState<Map<number, Record<string, unknown>[]>>(() => {
-    const m = new Map<number, Record<string, unknown>[]>();
-    if (initialPage.rows.length > 0) {
-      // Server may return more than one chunk's worth in initialPage; split.
-      for (let i = 0; i < initialPage.rows.length; i += pageSize) {
-        const idx = Math.floor((initialPage.offset + i) / pageSize);
-        m.set(idx, initialPage.rows.slice(i, i + pageSize));
+  const [chunks, setChunks] = useState<Map<number, Record<string, unknown>[]>>(
+    () => {
+      const m = new Map<number, Record<string, unknown>[]>();
+      if (initialPage.rows.length > 0) {
+        // Server may return more than one chunk's worth in initialPage; split.
+        for (let i = 0; i < initialPage.rows.length; i += pageSize) {
+          const idx = Math.floor((initialPage.offset + i) / pageSize);
+          m.set(idx, initialPage.rows.slice(i, i + pageSize));
+        }
       }
-    }
-    return m;
-  });
+      return m;
+    },
+  );
   /** Set of chunk indexes with an in-flight fetch (avoids duplicate requests). */
   const pendingChunks = useRef<Set<number>>(new Set());
   /** LRU access timestamps per chunk, for eviction. */
@@ -145,7 +206,7 @@ export function ResultsTable({
   const [rowHeight, setRowHeight] = useState(DEFAULT_ROW_HEIGHT);
   const tableWrapperRef = useRef<HTMLDivElement>(null);
   const firstRenderedRowRef = useRef<HTMLTableRowElement>(null);
-  const headerRowRef = useRef<HTMLTableRowElement>(null);
+  const headerRowRef = useRef<HTMLTableSectionElement>(null);
   const [headerHeight, setHeaderHeight] = useState(0);
 
   // ---- Misc UI state ----
@@ -181,8 +242,14 @@ export function ResultsTable({
   const [cellSaveError, setCellSaveError] = useState<string | null>(null);
 
   // Selection state — uses ABSOLUTE row indexes (over the full filtered result set).
-  interface CellPosition { row: number; col: number; }
-  interface Selection { start: CellPosition; end: CellPosition; }
+  interface CellPosition {
+    row: number;
+    col: number;
+  }
+  interface Selection {
+    start: CellPosition;
+    end: CellPosition;
+  }
   const [selection, setSelection] = useState<Selection | null>(null);
 
   const toast = useToast();
@@ -191,13 +258,29 @@ export function ResultsTable({
   const [showColumnsPanel, setShowColumnsPanel] = useState(false);
   const [columnsPanelWidth, setColumnsPanelWidth] = useState(() => {
     const maxWidth = Math.min(800, Math.floor(window.innerWidth * 0.5));
-    return Math.max(320, Math.min(maxWidth, Math.floor(window.innerWidth * 0.35)));
+    return Math.max(
+      320,
+      Math.min(maxWidth, Math.floor(window.innerWidth * 0.35)),
+    );
   });
-  const [initialExpandedColumn, setInitialExpandedColumn] = useState<string | null>(null);
-  const [columnStatsMap, setColumnStatsMap] = useState<Record<string, ColumnStats | null>>({});
-  const [loadingStatsColumn, setLoadingStatsColumn] = useState<string | null>(null);
+  const [initialExpandedColumn, setInitialExpandedColumn] = useState<
+    string | null
+  >(null);
+  const [columnStatsMap, setColumnStatsMap] = useState<
+    Record<string, ColumnStats | null>
+  >({});
+  const [loadingStatsColumn, setLoadingStatsColumn] = useState<string | null>(
+    null,
+  );
   const [statsError, setStatsError] = useState<string | null>(null);
-  const [columnSummaries, setColumnSummaries] = useState<Array<{ name: string; distinctCount: number; nullPercent: number; inferredType: string }>>([]);
+  const [columnSummaries, setColumnSummaries] = useState<
+    Array<{
+      name: string;
+      distinctCount: number;
+      nullPercent: number;
+      inferredType: string;
+    }>
+  >([]);
   const [loadingSummaries, setLoadingSummaries] = useState(false);
   const [summariesLoaded, setSummariesLoaded] = useState(false);
 
@@ -243,7 +326,10 @@ export function ResultsTable({
     }
     setChunks(m);
     setSort({
-      column: initialPage.sortColumn || null,
+      column: initialPage.sortColumn
+        ? columnRefLabel(initialPage.sortColumn)
+        : null,
+      path: initialPage.sortColumn ?? null,
       direction: initialPage.sortDirection || null,
     });
   }, [initialPage, pageSize]);
@@ -265,9 +351,10 @@ export function ResultsTable({
     };
     el.addEventListener('scroll', onScroll, { passive: true });
 
-    const ro = 'ResizeObserver' in window
-      ? new ResizeObserver(() => setViewportHeight(el.clientHeight))
-      : null;
+    const ro =
+      "ResizeObserver" in window
+        ? new ResizeObserver(() => setViewportHeight(el.clientHeight))
+        : null;
     ro?.observe(el);
     setViewportHeight(el.clientHeight);
 
@@ -308,7 +395,10 @@ export function ResultsTable({
   const domScrollRange = Math.max(1, scrollSurfaceHeight - visibleHeight);
   const virtualScrollRange = Math.max(0, idealTotalHeight - visibleHeight);
   const scrollScale = virtualScrollRange / domScrollRange;
-  const virtualScrollTop = Math.min(virtualScrollRange, scrollTop * scrollScale);
+  const virtualScrollTop = Math.min(
+    virtualScrollRange,
+    scrollTop * scrollScale,
+  );
 
   const firstVisible = Math.max(0, Math.floor(virtualScrollTop / rowHeight));
   const lastVisible = Math.min(
@@ -319,7 +409,9 @@ export function ResultsTable({
   const fractional = virtualScrollTop - firstVisible * rowHeight;
   // Cap overscan above the first visible row so the top spacer never goes
   // negative under compression (which would misalign the rendered slice).
-  const aboveCapacity = Math.floor(Math.max(0, scrollTop - fractional) / rowHeight);
+  const aboveCapacity = Math.floor(
+    Math.max(0, scrollTop - fractional) / rowHeight,
+  );
   const overscanAbove = Math.min(OVERSCAN_ROWS, aboveCapacity);
   const renderStart = Math.max(0, firstVisible - overscanAbove);
   const renderEnd = Math.min(filteredRowCount, lastVisible + OVERSCAN_ROWS);
@@ -348,7 +440,14 @@ export function ResultsTable({
   // for a fresh load after sort/filter reset (chunkIdx=0 after clearing).
   // --------------------------------------------------------------------------
   const fetchChunk = useCallback(
-    (chunkIdx: number, opts?: { sortColumn?: string | null; sortDirection?: SortDirection; whereClause?: string }) => {
+    (
+      chunkIdx: number,
+      opts?: {
+        sortColumn?: ColumnRef | null;
+        sortDirection?: SortDirection;
+        whereClause?: string;
+      },
+    ) => {
       if (!cacheId) return;
       if (pendingChunks.current.has(chunkIdx)) return;
       pendingChunks.current.add(chunkIdx);
@@ -357,7 +456,7 @@ export function ResultsTable({
         type: 'requestPage',
         cacheId,
         offset: chunkIdx * pageSize,
-        sortColumn: opts?.sortColumn ?? sort.column ?? undefined,
+        sortColumn: opts?.sortColumn ?? sort.path ?? undefined,
         sortDirection: opts?.sortDirection ?? sort.direction ?? undefined,
         whereClause: opts?.whereClause ?? getActiveWhereClause(),
         requestVersion: cacheVersion.current,
@@ -372,19 +471,33 @@ export function ResultsTable({
   useEffect(() => {
     if (!cacheId || filteredRowCount === 0) return;
     const firstChunk = Math.floor(renderStart / pageSize);
-    const lastChunk = Math.floor(Math.max(renderStart, renderEnd - 1) / pageSize);
+    const lastChunk = Math.floor(
+      Math.max(renderStart, renderEnd - 1) / pageSize,
+    );
     for (let c = firstChunk; c <= lastChunk; c++) {
       if (!chunks.has(c) && !pendingChunks.current.has(c)) {
         fetchChunk(c);
       }
     }
-  }, [renderStart, renderEnd, chunks, fetchChunk, cacheId, filteredRowCount, pageSize]);
+  }, [
+    renderStart,
+    renderEnd,
+    chunks,
+    fetchChunk,
+    cacheId,
+    filteredRowCount,
+    pageSize,
+  ]);
 
   // --------------------------------------------------------------------------
   // Reset cache, scroll, and refetch chunk 0 — used when sort/filter changes.
   // --------------------------------------------------------------------------
   const resetAndReload = useCallback(
-    (sortColumn: string | null, sortDirection: SortDirection, whereClause: string) => {
+    (
+      sortColumn: ColumnRef | null,
+      sortDirection: SortDirection,
+      whereClause: string,
+    ) => {
       cacheVersion.current++;
       pendingChunks.current.clear();
       chunkAccess.current.clear();
@@ -427,7 +540,9 @@ export function ResultsTable({
           // but never evict chunks currently in the visible render window.
           if (next.size > MAX_CACHED_CHUNKS) {
             const visibleFirst = Math.floor(renderStart / pageSize);
-            const visibleLast = Math.floor(Math.max(renderStart, renderEnd - 1) / pageSize);
+            const visibleLast = Math.floor(
+              Math.max(renderStart, renderEnd - 1) / pageSize,
+            );
             const candidates = [...next.keys()].filter(
               (k) => k < visibleFirst || k > visibleLast
             );
@@ -444,21 +559,36 @@ export function ResultsTable({
           }
           return next;
         });
-      } else if (message.type === 'columnStats' && message.cacheId === cacheId) {
+      } else if (
+        message.type === "columnStats" &&
+        message.cacheId === cacheId
+      ) {
         if (message.data) {
-          setColumnStatsMap((prev) => ({ ...prev, [message.data.column]: message.data }));
+          setColumnStatsMap((prev) => ({
+            ...prev,
+            [message.data.column]: message.data,
+          }));
         }
         setStatsError(message.error || null);
         setLoadingStatsColumn(null);
-      } else if (message.type === 'columnSummaries' && message.cacheId === cacheId) {
+      } else if (
+        message.type === "columnSummaries" &&
+        message.cacheId === cacheId
+      ) {
         if (message.data) setColumnSummaries(message.data);
         setLoadingSummaries(false);
         setSummariesLoaded(true);
-      } else if (message.type === 'distinctValues' && message.cacheId === cacheId) {
+      } else if (
+        message.type === "distinctValues" &&
+        message.cacheId === cacheId
+      ) {
         setDistinctValues(message.data || []);
         setColumnCardinality(message.cardinality || 0);
         setLoadingDistinct(false);
-      } else if (message.type === 'filterError' && message.cacheId === cacheId) {
+      } else if (
+        message.type === "filterError" &&
+        message.cacheId === cacheId
+      ) {
         if (
           typeof message.requestVersion === 'number' &&
           message.requestVersion !== cacheVersion.current
@@ -471,17 +601,25 @@ export function ResultsTable({
         if (message.error) {
           toast.show('Copy failed');
         } else if (message.data) {
-          const { columns: copyColumns, rows: copyRows, maxCopyRows: limit } = message.data;
+          const {
+            columns: copyColumns,
+            rows: copyRows,
+            maxCopyRows: limit,
+          } = message.data;
           const text = formatTableAsText(copyColumns, copyRows);
-          navigator.clipboard.writeText(text).then(() => {
-            const rowCount = copyRows.length;
-            const label = rowCount >= limit
-              ? `${rowCount.toLocaleString()} rows (limit)`
-              : `${rowCount.toLocaleString()} rows`;
-            toast.show(`Copied ${label}`);
-          }).catch(() => {
-            toast.show('Failed to copy');
-          });
+          navigator.clipboard
+            .writeText(text)
+            .then(() => {
+              const rowCount = copyRows.length;
+              const label =
+                rowCount >= limit
+                  ? `${rowCount.toLocaleString()} rows (limit)`
+                  : `${rowCount.toLocaleString()} rows`;
+              toast.show(`Copied ${label}`);
+            })
+            .catch(() => {
+              toast.show("Failed to copy");
+            });
         }
       } else if (message.type === 'refreshError') {
         setIsRefreshing(false);
@@ -492,7 +630,8 @@ export function ResultsTable({
           !cellSave ||
           message.rowId !== cellSave.rowId ||
           message.column !== cellSave.column
-        ) return;
+        )
+          return;
         if (message.error) {
           setCellSaveError(message.error);
           setCellSave(null);
@@ -506,7 +645,12 @@ export function ResultsTable({
             for (let i = 0; i < rows.length; i++) {
               const r = rows[i] as Record<string, unknown>;
               const rid = r.__rowid;
-              const ridNum = typeof rid === 'bigint' ? Number(rid) : (typeof rid === 'number' ? rid : null);
+              const ridNum =
+                typeof rid === "bigint"
+                  ? Number(rid)
+                  : typeof rid === "number"
+                    ? rid
+                    : null;
               if (ridNum === message.rowId) {
                 const updated = { ...r, [message.column]: message.newValue };
                 const newRows = rows.slice();
@@ -531,68 +675,101 @@ export function ResultsTable({
   // --------------------------------------------------------------------------
   // Sort / filter handlers — all converge on resetAndReload.
   // --------------------------------------------------------------------------
-  const handleSort = useCallback((column: string) => {
-    let next: { column: string | null; direction: SortDirection };
-    if (sort.column !== column) next = { column, direction: 'asc' };
-    else if (sort.direction === 'asc') next = { column, direction: 'desc' };
-    else next = { column: null, direction: null };
-    setSort(next);
-    resetAndReload(next.column, next.direction, getActiveWhereClause());
-  }, [sort, resetAndReload, getActiveWhereClause]);
+  const handleSort = useCallback(
+    (column: string, path: ColumnRef) => {
+      let next: {
+        column: string | null;
+        path: ColumnRef | null;
+        direction: SortDirection;
+      };
+      if (sort.column !== column) next = { column, path, direction: "asc" };
+      else if (sort.direction === "asc")
+        next = { column, path, direction: "desc" };
+      else next = { column: null, path: null, direction: null };
+      setSort(next);
+      resetAndReload(next.path, next.direction, getActiveWhereClause());
+    },
+    [sort, resetAndReload, getActiveWhereClause],
+  );
 
-  const applyFilters = useCallback((newFilters: ColumnFilter[]) => {
-    const clause = filtersToWhereClause(newFilters);
-    resetAndReload(sort.column, sort.direction, clause);
-  }, [resetAndReload, sort]);
+  const applyFilters = useCallback(
+    (newFilters: ColumnFilter[]) => {
+      const clause = filtersToWhereClause(newFilters);
+      resetAndReload(sort.path, sort.direction, clause);
+    },
+    [resetAndReload, sort],
+  );
 
-  const handleAddFilter = useCallback((filter: ColumnFilter) => {
-    const newFilters = [...filterState.filters, filter];
-    setFilterState((prev) => ({ ...prev, filters: newFilters }));
-    applyFilters(newFilters);
-    setFilterPopover(null);
-  }, [filterState.filters, applyFilters]);
+  const handleAddFilter = useCallback(
+    (filter: ColumnFilter) => {
+      const newFilters = [...filterState.filters, filter];
+      setFilterState((prev) => ({ ...prev, filters: newFilters }));
+      applyFilters(newFilters);
+      setFilterPopover(null);
+    },
+    [filterState.filters, applyFilters],
+  );
 
-  const handleRemoveFilter = useCallback((filterId: string) => {
-    const newFilters = filterState.filters.filter((f) => f.id !== filterId);
-    setFilterState((prev) => ({ ...prev, filters: newFilters }));
-    applyFilters(newFilters);
-  }, [filterState.filters, applyFilters]);
+  const handleRemoveFilter = useCallback(
+    (filterId: string) => {
+      const newFilters = filterState.filters.filter((f) => f.id !== filterId);
+      setFilterState((prev) => ({ ...prev, filters: newFilters }));
+      applyFilters(newFilters);
+    },
+    [filterState.filters, applyFilters],
+  );
 
   const handleClearFilters = useCallback(() => {
     setFilterState(createInitialFilterState());
-    resetAndReload(sort.column, sort.direction, '');
+    resetAndReload(sort.path, sort.direction, "");
   }, [resetAndReload, sort]);
 
   const handleTogglePause = useCallback(() => {
     setFilterState((prev) => {
       const newPaused = !prev.isPaused;
       const clause = newPaused ? '' : filtersToWhereClause(prev.filters);
-      resetAndReload(sort.column, sort.direction, clause);
+      resetAndReload(sort.path, sort.direction, clause);
       return { ...prev, isPaused: newPaused };
     });
   }, [resetAndReload, sort]);
 
-  const handleOpenFilterPopover = useCallback((column: string, columnType: string, event: React.MouseEvent) => {
-    const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
-    const tableRect = tableWrapperRef.current?.getBoundingClientRect();
-    setFilterPopover({
-      column,
-      columnType,
-      position: {
-        top: rect.bottom - (tableRect?.top || 0) + 4,
-        left: rect.left - (tableRect?.left || 0),
-      },
-    });
-    setLoadingDistinct(true);
-    getVscodeApi()?.postMessage({ type: 'requestDistinctValues', cacheId, column });
-  }, [cacheId]);
+  const handleOpenFilterPopover = useCallback(
+    (
+      column: string,
+      columnPath: ColumnRef,
+      columnType: string,
+      event: React.MouseEvent,
+    ) => {
+      const rect = (event.currentTarget as HTMLElement).getBoundingClientRect();
+      const tableRect = tableWrapperRef.current?.getBoundingClientRect();
+      setFilterPopover({
+        column,
+        columnPath,
+        columnType,
+        position: {
+          top: rect.bottom - (tableRect?.top || 0) + 4,
+          left: rect.left - (tableRect?.left || 0),
+        },
+      });
+      setLoadingDistinct(true);
+      getVscodeApi()?.postMessage({
+        type: "requestDistinctValues",
+        cacheId,
+        column: columnPath,
+      });
+    },
+    [cacheId],
+  );
 
   // --------------------------------------------------------------------------
   // Export, copy, refresh, navigation
   // --------------------------------------------------------------------------
-  const handleExport = useCallback((format: 'csv' | 'parquet' | 'json' | 'jsonl' | 'csv-tab' | 'json-tab') => {
-    getVscodeApi()?.postMessage({ type: 'export', cacheId, format });
-  }, [cacheId]);
+  const handleExport = useCallback(
+    (format: "csv" | "parquet" | "json" | "jsonl" | "csv-tab" | "json-tab") => {
+      getVscodeApi()?.postMessage({ type: "export", cacheId, format });
+    },
+    [cacheId],
+  );
 
   const requestColumnSummaries = useCallback(() => {
     if (!cacheId || summariesLoaded) return;
@@ -601,7 +778,8 @@ export function ResultsTable({
   }, [cacheId, summariesLoaded]);
 
   const activeWhereClause = useMemo(() => {
-    if (filterState.isPaused || filterState.filters.length === 0) return undefined;
+    if (filterState.isPaused || filterState.filters.length === 0)
+      return undefined;
     return filtersToWhereClause(filterState.filters);
   }, [filterState]);
 
@@ -610,29 +788,55 @@ export function ResultsTable({
     setColumnStatsMap({});
   }, [activeWhereClause]);
 
-  const requestColumnStats = useCallback((columnName: string) => {
-    if (!cacheId) return;
-    setLoadingStatsColumn(columnName);
-    setStatsError(null);
-    getVscodeApi()?.postMessage({
-      type: 'requestColumnStats',
-      cacheId,
-      column: columnName,
-      whereClause: activeWhereClause,
-    });
-  }, [cacheId, activeWhereClause]);
+  /** Dotted leaf label -> column reference, for resolving UI labels to SQL. */
+  const leafPathByLabel = useMemo(() => {
+    const m = new Map<string, ColumnRef>();
+    for (const leaf of leaves) m.set(columnRefLabel(leaf.path), leaf.path);
+    return m;
+  }, [leaves]);
 
-  const openColumnStats = useCallback((columnName: string) => {
-    if (showColumnsPanel && initialExpandedColumn === columnName) {
-      setShowColumnsPanel(false);
-      setInitialExpandedColumn(null);
-    } else {
-      setInitialExpandedColumn(columnName);
-      setShowColumnsPanel(true);
-      if (!summariesLoaded) requestColumnSummaries();
-      requestColumnStats(columnName);
-    }
-  }, [showColumnsPanel, initialExpandedColumn, requestColumnStats, summariesLoaded, requestColumnSummaries]);
+  /**
+   * Request stats for a leaf column. `columnName` is the dotted label used
+   * as the stats-cache key; the host receives the path form for SQL. The
+   * columns panel calls this with a label only, so unknown labels fall back
+   * to resolving through the leaf map (and finally to the raw name, which
+   * covers unexpanded top-level columns).
+   */
+  const requestColumnStats = useCallback(
+    (columnName: string, columnPath?: ColumnRef) => {
+      if (!cacheId) return;
+      setLoadingStatsColumn(columnName);
+      setStatsError(null);
+      getVscodeApi()?.postMessage({
+        type: "requestColumnStats",
+        cacheId,
+        column: columnPath ?? leafPathByLabel.get(columnName) ?? columnName,
+        whereClause: activeWhereClause,
+      });
+    },
+    [cacheId, activeWhereClause, leafPathByLabel],
+  );
+
+  const openColumnStats = useCallback(
+    (columnName: string, columnPath?: ColumnRef) => {
+      if (showColumnsPanel && initialExpandedColumn === columnName) {
+        setShowColumnsPanel(false);
+        setInitialExpandedColumn(null);
+      } else {
+        setInitialExpandedColumn(columnName);
+        setShowColumnsPanel(true);
+        if (!summariesLoaded) requestColumnSummaries();
+        requestColumnStats(columnName, columnPath);
+      }
+    },
+    [
+      showColumnsPanel,
+      initialExpandedColumn,
+      requestColumnStats,
+      summariesLoaded,
+      requestColumnSummaries,
+    ],
+  );
 
   const handleColumnResize = useCallback((column: string, width: number) => {
     setColumnWidths((prev) => ({ ...prev, [column]: Math.max(50, width) }));
@@ -661,14 +865,17 @@ export function ResultsTable({
     [handleColumnResize]
   );
 
-  const copyToClipboard = useCallback(async (text: string, label: string) => {
-    try {
-      await navigator.clipboard.writeText(text);
-      toast.show(`Copied ${label}`);
-    } catch {
-      toast.show('Failed to copy');
-    }
-  }, [toast]);
+  const copyToClipboard = useCallback(
+    async (text: string, label: string) => {
+      try {
+        await navigator.clipboard.writeText(text);
+        toast.show(`Copied ${label}`);
+      } catch {
+        toast.show("Failed to copy");
+      }
+    },
+    [toast],
+  );
 
   const copyFullTable = useCallback(() => {
     if (!cacheId || copyLoading) return;
@@ -693,127 +900,217 @@ export function ResultsTable({
    *     `openAsSql` with that SQL so the host opens an untitled .sql
    *     doc containing the exact query they're looking at.
    */
-  const handleOpenInEditor = useCallback((sqlToOpen: string) => {
-    if (sqlToOpen === sql) {
-      getVscodeApi()?.postMessage({ type: 'goToSource' });
-    } else {
-      getVscodeApi()?.postMessage({ type: 'openAsSql', sql: sqlToOpen });
-    }
-  }, [sql]);
+  const handleOpenInEditor = useCallback(
+    (sqlToOpen: string) => {
+      if (sqlToOpen === sql) {
+        getVscodeApi()?.postMessage({ type: "goToSource" });
+      } else {
+        getVscodeApi()?.postMessage({ type: "openAsSql", sql: sqlToOpen });
+      }
+    },
+    [sql],
+  );
 
   // --------------------------------------------------------------------------
   // Selection helpers — operate on absolute row indexes.
   // Lookups against `chunks` resolve only the rows that are currently cached;
   // un-cached rows in a selected range produce '—' on copy.
   // --------------------------------------------------------------------------
-  const lookupRow = useCallback((rowIdx: number): Record<string, unknown> | null => {
-    const chunkIdx = Math.floor(rowIdx / pageSize);
-    const chunk = chunks.get(chunkIdx);
-    return chunk ? chunk[rowIdx % pageSize] ?? null : null;
-  }, [chunks, pageSize]);
+  const lookupRow = useCallback(
+    (rowIdx: number): Record<string, unknown> | null => {
+      const chunkIdx = Math.floor(rowIdx / pageSize);
+      const chunk = chunks.get(chunkIdx);
+      return chunk ? (chunk[rowIdx % pageSize] ?? null) : null;
+    },
+    [chunks, pageSize],
+  );
 
-  const isCellSelected = useCallback((rowIdx: number, colIdx: number): boolean => {
-    if (!selection) return false;
-    const minRow = Math.min(selection.start.row, selection.end.row);
-    const maxRow = Math.max(selection.start.row, selection.end.row);
-    const minCol = Math.min(selection.start.col, selection.end.col);
-    const maxCol = Math.max(selection.start.col, selection.end.col);
-    return rowIdx >= minRow && rowIdx <= maxRow && colIdx >= minCol && colIdx <= maxCol;
-  }, [selection]);
+  const isCellSelected = useCallback(
+    (rowIdx: number, colIdx: number): boolean => {
+      if (!selection) return false;
+      const minRow = Math.min(selection.start.row, selection.end.row);
+      const maxRow = Math.max(selection.start.row, selection.end.row);
+      const minCol = Math.min(selection.start.col, selection.end.col);
+      const maxCol = Math.max(selection.start.col, selection.end.col);
+      return (
+        rowIdx >= minRow &&
+        rowIdx <= maxRow &&
+        colIdx >= minCol &&
+        colIdx <= maxCol
+      );
+    },
+    [selection],
+  );
 
-  const isRowSelected = useCallback((rowIdx: number): boolean => {
-    if (!selection) return false;
-    const minRow = Math.min(selection.start.row, selection.end.row);
-    const maxRow = Math.max(selection.start.row, selection.end.row);
-    const minCol = Math.min(selection.start.col, selection.end.col);
-    const maxCol = Math.max(selection.start.col, selection.end.col);
-    return rowIdx >= minRow && rowIdx <= maxRow && minCol === 0 && maxCol === columns.length - 1;
-  }, [selection, columns.length]);
+  const isRowSelected = useCallback(
+    (rowIdx: number): boolean => {
+      if (!selection) return false;
+      const minRow = Math.min(selection.start.row, selection.end.row);
+      const maxRow = Math.max(selection.start.row, selection.end.row);
+      const minCol = Math.min(selection.start.col, selection.end.col);
+      const maxCol = Math.max(selection.start.col, selection.end.col);
+      return (
+        rowIdx >= minRow &&
+        rowIdx <= maxRow &&
+        minCol === 0 &&
+        maxCol === leaves.length - 1
+      );
+    },
+    [selection, leaves.length],
+  );
 
-  const isColumnSelected = useCallback((colIdx: number): boolean => {
-    if (!selection) return false;
-    const minRow = Math.min(selection.start.row, selection.end.row);
-    const maxRow = Math.max(selection.start.row, selection.end.row);
-    const minCol = Math.min(selection.start.col, selection.end.col);
-    const maxCol = Math.max(selection.start.col, selection.end.col);
-    return colIdx >= minCol && colIdx <= maxCol && minRow === 0 && maxRow === filteredRowCount - 1;
-  }, [selection, filteredRowCount]);
+  const isColumnSelected = useCallback(
+    (colIdx: number): boolean => {
+      if (!selection) return false;
+      const minRow = Math.min(selection.start.row, selection.end.row);
+      const maxRow = Math.max(selection.start.row, selection.end.row);
+      const minCol = Math.min(selection.start.col, selection.end.col);
+      const maxCol = Math.max(selection.start.col, selection.end.col);
+      return (
+        colIdx >= minCol &&
+        colIdx <= maxCol &&
+        minRow === 0 &&
+        maxRow === filteredRowCount - 1
+      );
+    },
+    [selection, filteredRowCount],
+  );
 
-  const handleCellClick = useCallback((rowIdx: number, colIdx: number, e: React.MouseEvent) => {
-    if (e.shiftKey && selection) {
-      setSelection((prev) => prev ? { start: prev.start, end: { row: rowIdx, col: colIdx } } : null);
-    } else {
-      const single = selection &&
-        selection.start.row === selection.end.row &&
-        selection.start.col === selection.end.col &&
-        selection.start.row === rowIdx &&
-        selection.start.col === colIdx;
-      setSelection(single ? null : { start: { row: rowIdx, col: colIdx }, end: { row: rowIdx, col: colIdx } });
-    }
-  }, [selection]);
+  const handleCellClick = useCallback(
+    (rowIdx: number, colIdx: number, e: React.MouseEvent) => {
+      if (e.shiftKey && selection) {
+        setSelection((prev) =>
+          prev
+            ? { start: prev.start, end: { row: rowIdx, col: colIdx } }
+            : null,
+        );
+      } else {
+        const single =
+          selection &&
+          selection.start.row === selection.end.row &&
+          selection.start.col === selection.end.col &&
+          selection.start.row === rowIdx &&
+          selection.start.col === colIdx;
+        setSelection(
+          single
+            ? null
+            : {
+                start: { row: rowIdx, col: colIdx },
+                end: { row: rowIdx, col: colIdx },
+              },
+        );
+      }
+    },
+    [selection],
+  );
 
-  const handleCellDoubleClick = useCallback((rowIdx: number, colIdx: number) => {
-    const row = lookupRow(rowIdx);
-    if (!row) return;
-    const col = columns[colIdx];
-    // __rowid is injected by the server (fetchPage) so the modal can edit
-    // the right row regardless of the active sort / filter context.
-    const rid = (row as Record<string, unknown>).__rowid;
-    const rowId = typeof rid === 'bigint' ? Number(rid) : (typeof rid === 'number' ? rid : null);
-    setExpandedCell({
-      value: row[col],
-      column: col,
-      columnType: columnTypes[colIdx] || 'VARCHAR',
-      rowIndex: rowIdx,
-      colIndex: colIdx,
-      rowId,
-    });
-    setCellSaveError(null);
-  }, [lookupRow, columns, columnTypes]);
+  const handleCellDoubleClick = useCallback(
+    (rowIdx: number, colIdx: number) => {
+      const row = lookupRow(rowIdx);
+      if (!row) return;
+      const leaf = leaves[colIdx];
+      if (!leaf) return;
+      // __rowid is injected by the server (fetchPage) so the modal can edit
+      // the right row regardless of the active sort / filter context.
+      const rid = (row as Record<string, unknown>).__rowid;
+      const rowId =
+        typeof rid === "bigint"
+          ? Number(rid)
+          : typeof rid === "number"
+            ? rid
+            : null;
+      setExpandedCell({
+        value: leaf.isNested
+          ? getValueAtPath(row, leaf.path)
+          : row[leaf.path[0]],
+        column: leaf.path.join("."),
+        columnType: leaf.type,
+        rowIndex: rowIdx,
+        colIndex: colIdx,
+        // Editing writes back by top-level column name; nested sub-cells are
+        // view-only (rowId null disables the Save affordance).
+        rowId: leaf.isNested ? null : rowId,
+      });
+      setCellSaveError(null);
+    },
+    [lookupRow, leaves],
+  );
 
   /**
    * Save handler for the cell modal. Posts updateCell to the host, leaving
    * the modal in a saving state until the matching cellUpdated response
    * arrives in the message effect below.
    */
-  const handleCellSave = useCallback((newValue: string | null) => {
-    if (!expandedCell || expandedCell.rowId === null) return;
-    setCellSave({
-      rowId: expandedCell.rowId,
-      column: expandedCell.column,
-      columnType: expandedCell.columnType,
-    });
-    setCellSaveError(null);
-    getVscodeApi()?.postMessage({
-      type: 'updateCell',
-      cacheId,
-      rowId: expandedCell.rowId,
-      column: expandedCell.column,
-      columnType: expandedCell.columnType,
-      newValue,
-    });
-  }, [expandedCell, cacheId]);
+  const handleCellSave = useCallback(
+    (newValue: string | null) => {
+      if (!expandedCell || expandedCell.rowId === null) return;
+      setCellSave({
+        rowId: expandedCell.rowId,
+        column: expandedCell.column,
+        columnType: expandedCell.columnType,
+      });
+      setCellSaveError(null);
+      getVscodeApi()?.postMessage({
+        type: "updateCell",
+        cacheId,
+        rowId: expandedCell.rowId,
+        column: expandedCell.column,
+        columnType: expandedCell.columnType,
+        newValue,
+      });
+    },
+    [expandedCell, cacheId],
+  );
 
-  const handleRowSelect = useCallback((rowIdx: number, e: React.MouseEvent) => {
-    if (e.shiftKey && selection) {
-      setSelection((prev) => prev ? { start: { row: prev.start.row, col: 0 }, end: { row: rowIdx, col: columns.length - 1 } } : null);
-    } else {
-      setSelection({ start: { row: rowIdx, col: 0 }, end: { row: rowIdx, col: columns.length - 1 } });
-    }
-  }, [selection, columns.length]);
+  const handleRowSelect = useCallback(
+    (rowIdx: number, e: React.MouseEvent) => {
+      if (e.shiftKey && selection) {
+        setSelection((prev) =>
+          prev
+            ? {
+                start: { row: prev.start.row, col: 0 },
+                end: { row: rowIdx, col: leaves.length - 1 },
+              }
+            : null,
+        );
+      } else {
+        setSelection({
+          start: { row: rowIdx, col: 0 },
+          end: { row: rowIdx, col: leaves.length - 1 },
+        });
+      }
+    },
+    [selection, leaves.length],
+  );
 
-  const handleColumnSelect = useCallback((colIdx: number, e: React.MouseEvent) => {
-    if (e.shiftKey && selection) {
-      setSelection((prev) => prev ? { start: { row: 0, col: prev.start.col }, end: { row: filteredRowCount - 1, col: colIdx } } : null);
-    } else {
-      setSelection({ start: { row: 0, col: colIdx }, end: { row: filteredRowCount - 1, col: colIdx } });
-    }
-  }, [selection, filteredRowCount]);
+  const handleColumnSelect = useCallback(
+    (colIdx: number, e: React.MouseEvent) => {
+      if (e.shiftKey && selection) {
+        setSelection((prev) =>
+          prev
+            ? {
+                start: { row: 0, col: prev.start.col },
+                end: { row: filteredRowCount - 1, col: colIdx },
+              }
+            : null,
+        );
+      } else {
+        setSelection({
+          start: { row: 0, col: colIdx },
+          end: { row: filteredRowCount - 1, col: colIdx },
+        });
+      }
+    },
+    [selection, filteredRowCount],
+  );
 
   const selectAll = useCallback(() => {
     if (filteredRowCount === 0) return;
-    setSelection({ start: { row: 0, col: 0 }, end: { row: filteredRowCount - 1, col: columns.length - 1 } });
-  }, [filteredRowCount, columns.length]);
+    setSelection({
+      start: { row: 0, col: 0 },
+      end: { row: filteredRowCount - 1, col: leaves.length - 1 },
+    });
+  }, [filteredRowCount, leaves.length]);
 
   const getSelectionText = useCallback((): string => {
     /**
@@ -824,23 +1121,30 @@ export function ResultsTable({
      */
     const SELECTION_ROW_CAP = 10_000;
 
+    const leafValue = (row: Record<string, unknown>, leaf: LeafColumn) =>
+      leaf.isNested ? getValueAtPath(row, leaf.path) : row[leaf.path[0]];
+
     if (!selection) {
       // No explicit selection: copy the currently-rendered slice.
-      const rendered: Record<string, unknown>[] = [];
+      const header = leaves.map((l) => l.path.join(".")).join("\t");
+      const lines: string[] = [header];
       for (let r = renderStart; r < renderEnd; r++) {
         const row = lookupRow(r);
-        if (row) rendered.push(row);
+        if (row)
+          lines.push(
+            leaves.map((l) => formatValue(leafValue(row, l))).join("\t"),
+          );
       }
-      return formatTableAsText(columns, rendered);
+      return lines.join("\n");
     }
     const minRow = Math.min(selection.start.row, selection.end.row);
     const maxRow = Math.max(selection.start.row, selection.end.row);
     const minCol = Math.min(selection.start.col, selection.end.col);
     const maxCol = Math.max(selection.start.col, selection.end.col);
-    const selectedCols = columns.slice(minCol, maxCol + 1);
+    const selectedLeaves = leaves.slice(minCol, maxCol + 1);
     if (minRow === maxRow && minCol === maxCol) {
       const row = lookupRow(minRow);
-      return row ? formatValue(row[columns[minCol]]) : '';
+      return row ? formatValue(leafValue(row, leaves[minCol])) : "";
     }
     const effectiveMax = Math.min(maxRow, minRow + SELECTION_ROW_CAP - 1);
     const truncated = maxRow > effectiveMax;
@@ -849,17 +1153,23 @@ export function ResultsTable({
       const row = lookupRow(r);
       if (!row) {
         // Row not cached yet — placeholder so column alignment is preserved.
-        lines.push(selectedCols.map(() => '').join('\t'));
+        lines.push(selectedLeaves.map(() => "").join("\t"));
       } else {
-        lines.push(selectedCols.map((col) => formatValue(row[col])).join('\t'));
+        lines.push(
+          selectedLeaves
+            .map((leaf) => formatValue(leafValue(row, leaf)))
+            .join("\t"),
+        );
       }
     }
     if (truncated) {
       // Mention this in-line so the user knows why the copy is shorter.
-      lines.push(`-- truncated at ${SELECTION_ROW_CAP.toLocaleString()} rows; use "Copy Table" for the full export`);
+      lines.push(
+        `-- truncated at ${SELECTION_ROW_CAP.toLocaleString()} rows; use "Copy Table" for the full export`,
+      );
     }
     return lines.join('\n');
-  }, [selection, columns, lookupRow, renderStart, renderEnd]);
+  }, [selection, leaves, lookupRow, renderStart, renderEnd]);
 
   const getSelectionLabel = useCallback((): string => {
     if (!selection) return 'visible rows';
@@ -870,14 +1180,19 @@ export function ResultsTable({
     const rowCount = maxRow - minRow + 1;
     const colCount = maxCol - minCol + 1;
     if (rowCount === 1 && colCount === 1) return 'cell';
-    if (colCount === columns.length) return `${rowCount} row${rowCount > 1 ? 's' : ''}`;
+    if (colCount === leaves.length)
+      return `${rowCount} row${rowCount > 1 ? "s" : ""}`;
     return `${rowCount}×${colCount} cells`;
-  }, [selection, columns.length]);
+  }, [selection, leaves.length]);
 
   // Keyboard shortcuts
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
-      if (!tableWrapperRef.current?.contains(document.activeElement) && document.activeElement !== document.body) return;
+      if (
+        !tableWrapperRef.current?.contains(document.activeElement) &&
+        document.activeElement !== document.body
+      )
+        return;
       if ((e.metaKey || e.ctrlKey) && e.key === 'c') {
         const textSelection = window.getSelection();
         if (textSelection && textSelection.toString().length > 0) return;
@@ -914,16 +1229,29 @@ export function ResultsTable({
     if (!hasFilters && !hasSort) return sql;
     const parts: string[] = [];
     parts.push('SELECT * FROM (');
-    parts.push('  ' + sql.trim().replace(/;?\s*$/, '').split('\n').join('\n  '));
+    parts.push(
+      "  " +
+        sql
+          .trim()
+          .replace(/;?\s*$/, "")
+          .split("\n")
+          .join("\n  "),
+    );
     parts.push(') AS _query');
     if (hasFilters) parts.push(`WHERE ${whereClause}`);
-    if (hasSort) parts.push(`ORDER BY "${sort.column}" ${sort.direction?.toUpperCase() || 'ASC'}`);
+    if (hasSort)
+      parts.push(
+        `ORDER BY ${quoteColumnRef(sort.path ?? sort.column ?? "")} ${
+          sort.direction?.toUpperCase() || "ASC"
+        }`,
+      );
     return parts.join('\n');
   }, [sql, filterState, sort]);
 
-  const statementLabel = totalStatements !== undefined && statementIndex !== undefined
-    ? `Query ${statementIndex + 1} of ${totalStatements}`
-    : null;
+  const statementLabel =
+    totalStatements !== undefined && statementIndex !== undefined
+      ? `Query ${statementIndex + 1} of ${totalStatements}`
+      : null;
 
   // --------------------------------------------------------------------------
   // Build the visible row list (for rendering).
@@ -944,13 +1272,17 @@ export function ResultsTable({
       <div className="results-container collapsed" onClick={onToggleExpand}>
         <div className="query-header collapsed">
           <span className="query-expand-icon">▶</span>
-          {statementLabel && <span className="query-label">{statementLabel}</span>}
+          {statementLabel && (
+            <span className="query-label">{statementLabel}</span>
+          )}
           <code className="query-sql">
             <SqlPreview sql={sql} />
           </code>
           <span className="query-meta">
             {hasResults ? (
-              <span className="query-rows">{totalRows.toLocaleString()} rows</span>
+              <span className="query-rows">
+                {totalRows.toLocaleString()} rows
+              </span>
             ) : (
               <span className="query-success">✓ success</span>
             )}
@@ -962,7 +1294,9 @@ export function ResultsTable({
   }
 
   return (
-    <div className={`results-container ${isCollapsible ? 'collapsible' : ''} ${!hasResults ? 'no-results' : ''}`}>
+    <div
+      className={`results-container ${isCollapsible ? "collapsible" : ""} ${!hasResults ? "no-results" : ""}`}
+    >
       <Toast message={toast.message} />
 
       {expandedCell && (
@@ -986,7 +1320,10 @@ export function ResultsTable({
       {showColumnsPanel && (
         <ColumnsPanel
           columns={columns}
-          onClose={() => { setShowColumnsPanel(false); setInitialExpandedColumn(null); }}
+          onClose={() => {
+            setShowColumnsPanel(false);
+            setInitialExpandedColumn(null);
+          }}
           onRequestStats={requestColumnStats}
           columnStats={columnStatsMap}
           loadingStats={loadingStatsColumn}
@@ -1012,22 +1349,39 @@ export function ResultsTable({
       {/* Query header */}
       <div className="query-header">
         {isCollapsible && (
-          <span className="query-expand-icon" onClick={onToggleExpand} title="Collapse">▼</span>
+          <span
+            className="query-expand-icon"
+            onClick={onToggleExpand}
+            title="Collapse"
+          >
+            ▼
+          </span>
         )}
-        {statementLabel && <span className="query-label">{statementLabel}</span>}
-        <code className="query-sql" onClick={() => setShowSqlModal(true)} title="Click to view full SQL">
+        {statementLabel && (
+          <span className="query-label">{statementLabel}</span>
+        )}
+        <code
+          className="query-sql"
+          onClick={() => setShowSqlModal(true)}
+          title="Click to view full SQL"
+        >
           <SqlPreview sql={sql} />
         </code>
         <span className="query-meta">
           {hasResults ? (
-            <span className="query-rows">{totalRows.toLocaleString()} rows</span>
+            <span className="query-rows">
+              {totalRows.toLocaleString()} rows
+            </span>
           ) : (
             <span className="query-success">✓ success</span>
           )}
           <span className="query-time">{executionTime.toFixed(1)}ms</span>
           <button
             className={`refresh-btn ${isRefreshing ? 'refreshing' : ''}`}
-            onClick={(e) => { e.stopPropagation(); handleRefresh(); }}
+            onClick={(e) => {
+              e.stopPropagation();
+              handleRefresh();
+            }}
             disabled={isRefreshing}
             title="Re-run original query"
           >
@@ -1042,10 +1396,16 @@ export function ResultsTable({
           <div className="stat">
             <span className="stat-label">rows</span>
             <span className="stat-value">
-              {filteredRowCount < totalRows
-                ? <>{filteredRowCount.toLocaleString()} <span className="stat-total">/ {totalRows.toLocaleString()}</span></>
-                : totalRows.toLocaleString()
-              }
+              {filteredRowCount < totalRows ? (
+                <>
+                  {filteredRowCount.toLocaleString()}{" "}
+                  <span className="stat-total">
+                    / {totalRows.toLocaleString()}
+                  </span>
+                </>
+              ) : (
+                totalRows.toLocaleString()
+              )}
             </span>
           </div>
           <button
@@ -1063,7 +1423,9 @@ export function ResultsTable({
           {sort.column && (
             <div className="stat">
               <span className="stat-label">sort</span>
-              <span className="stat-value">{sort.column} {sort.direction === 'asc' ? '↑' : '↓'}</span>
+              <span className="stat-value">
+                {sort.column} {sort.direction === "asc" ? "↑" : "↓"}
+              </span>
             </div>
           )}
           {selectionInfo && (
@@ -1083,18 +1445,30 @@ export function ResultsTable({
           onClearAll={handleClearFilters}
           onTogglePause={handleTogglePause}
           onAddFilter={() => {
-            if (columns.length > 0 && tableWrapperRef.current) {
-              const firstHeader = tableWrapperRef.current.querySelector('th:not(.row-number-header)');
+            if (leaves.length > 0 && tableWrapperRef.current) {
+              const firstHeader = tableWrapperRef.current.querySelector(
+                "th:not(.row-number-header):not(.group-header)",
+              );
               if (firstHeader) {
                 const rect = firstHeader.getBoundingClientRect();
-                const tableRect = tableWrapperRef.current.getBoundingClientRect();
+                const tableRect =
+                  tableWrapperRef.current.getBoundingClientRect();
+                const firstLeaf = leaves[0];
                 setFilterPopover({
-                  column: columns[0],
-                  columnType: meta.columnTypes[0] || 'VARCHAR',
-                  position: { top: rect.bottom - tableRect.top + 4, left: rect.left - tableRect.left },
+                  column: columnRefLabel(firstLeaf.path),
+                  columnPath: firstLeaf.path,
+                  columnType: firstLeaf.type,
+                  position: {
+                    top: rect.bottom - tableRect.top + 4,
+                    left: rect.left - tableRect.left,
+                  },
                 });
                 setLoadingDistinct(true);
-                getVscodeApi()?.postMessage({ type: 'requestDistinctValues', cacheId, column: columns[0] });
+                getVscodeApi()?.postMessage({
+                  type: "requestDistinctValues",
+                  cacheId,
+                  column: firstLeaf.path,
+                });
               }
             }
           }}
@@ -1113,7 +1487,10 @@ export function ResultsTable({
             <table>
               <thead>
                 <tr>
-                  <RowNumberHeader width={rowNumberWidth} onResize={handleRowNumberResize} />
+                  <RowNumberHeader
+                    width={rowNumberWidth}
+                    onResize={handleRowNumberResize}
+                  />
                   {columns.map((col, idx) => (
                     <th key={idx}>
                       <div className="th-content">
@@ -1125,8 +1502,13 @@ export function ResultsTable({
               </thead>
               <tbody>
                 <tr>
-                  <td colSpan={columns.length + 1} className="empty-row-message">
-                    {totalRows === 0 ? '0 rows returned' : '0 rows match the current filters'}
+                  <td
+                    colSpan={columns.length + 1}
+                    className="empty-row-message"
+                  >
+                    {totalRows === 0
+                      ? "0 rows returned"
+                      : "0 rows match the current filters"}
                   </td>
                 </tr>
               </tbody>
@@ -1138,53 +1520,116 @@ export function ResultsTable({
           {filterPopover && (
             <ColumnFilterPopover
               column={filterPopover.column}
+              columnPath={filterPopover.columnPath}
               columnType={filterPopover.columnType}
-              columns={columns.map((col, idx) => ({ name: col, type: meta.columnTypes[idx] || 'VARCHAR' }))}
+              columns={leaves.map((leaf) => ({
+                name: columnRefLabel(leaf.path),
+                path: leaf.path,
+                type: leaf.type,
+              }))}
               distinctValues={distinctValues}
               cardinality={columnCardinality}
               isLoading={loadingDistinct}
               onClose={() => setFilterPopover(null)}
               onApply={handleAddFilter}
-              onColumnChange={(newCol, newType) => {
-                setFilterPopover((prev) => prev ? { ...prev, column: newCol, columnType: newType } : null);
+              onColumnChange={(newCol, newType, newPath) => {
+                setFilterPopover((prev) =>
+                  prev
+                    ? {
+                        ...prev,
+                        column: newCol,
+                        columnPath: newPath,
+                        columnType: newType,
+                      }
+                    : null,
+                );
                 setDistinctValues([]);
                 setColumnCardinality(0);
                 setLoadingDistinct(true);
-                getVscodeApi()?.postMessage({ type: 'requestDistinctValues', cacheId, column: newCol });
+                getVscodeApi()?.postMessage({
+                  type: "requestDistinctValues",
+                  cacheId,
+                  column: newPath,
+                });
               }}
               position={filterPopover.position}
             />
           )}
 
           <table>
-            <thead>
-              <tr ref={headerRowRef}>
-                <RowNumberHeader width={rowNumberWidth} onResize={handleRowNumberResize} />
-                {columns.map((col, idx) => {
-                  const hasFilter = filterState.filters.some((f) => f.column === col);
-                  return (
-                    <ResizableHeader
-                      key={idx}
-                      column={col}
-                      width={columnWidths[col]}
-                      isSorted={sort.column === col}
-                      sortDirection={sort.column === col ? sort.direction : null}
-                      isSelected={isColumnSelected(idx)}
-                      hasFilter={hasFilter}
-                      onSort={() => handleSort(col)}
-                      onResize={(width) => handleColumnResize(col, width)}
-                      onSelect={(e) => handleColumnSelect(idx, e)}
-                      onOpenStats={() => openColumnStats(col)}
-                      onOpenFilter={(e) => handleOpenFilterPopover(col, meta.columnTypes[idx] || 'VARCHAR', e)}
+            <thead ref={headerRowRef}>
+              {nested.headerRows.map((rowCells, rowIdx) => (
+                <tr key={rowIdx}>
+                  {rowIdx === 0 && (
+                    <RowNumberHeader
+                      width={rowNumberWidth}
+                      onResize={handleRowNumberResize}
+                      rowSpan={nested.headerDepth}
                     />
-                  );
-                })}
-              </tr>
+                  )}
+                  {rowCells.map((cell: HeaderCell) => {
+                    if (cell.isGroup) {
+                      return (
+                        <th
+                          key={cell.key}
+                          colSpan={cell.colSpan}
+                          className="group-header"
+                          title={cell.type}
+                        >
+                          <div className="th-content group-header-content">
+                            <span className="col-name">{cell.label}</span>
+                          </div>
+                        </th>
+                      );
+                    }
+                    const leaf = leaves[cell.leafIndex];
+                    // Dotted label ("s.x") identifies the leaf in sort /
+                    // stats state; leaf.path is what the host turns into SQL.
+                    const label = columnRefLabel(leaf.path);
+                    const hasFilter = filterState.filters.some(
+                      (f) => columnRefLabel(f.column) === label,
+                    );
+                    const leafIdx = cell.leafIndex;
+                    return (
+                      <ResizableHeader
+                        key={cell.key}
+                        column={leaf.label}
+                        rowSpan={cell.rowSpan}
+                        width={columnWidths[leaf.key]}
+                        isSorted={sort.column === label}
+                        sortDirection={
+                          sort.column === label ? sort.direction : null
+                        }
+                        isSelected={isColumnSelected(leafIdx)}
+                        hasFilter={hasFilter}
+                        copyText={label}
+                        onSort={() => handleSort(label, leaf.path)}
+                        onResize={(width) =>
+                          handleColumnResize(leaf.key, width)
+                        }
+                        onSelect={(e) => handleColumnSelect(leafIdx, e)}
+                        onOpenStats={() => openColumnStats(label, leaf.path)}
+                        onOpenFilter={(e) =>
+                          handleOpenFilterPopover(
+                            label,
+                            leaf.path,
+                            leaf.type,
+                            e,
+                          )
+                        }
+                      />
+                    );
+                  })}
+                </tr>
+              ))}
             </thead>
             <tbody>
               {topSpacerHeight > 0 && (
                 <tr aria-hidden className="virt-spacer">
-                  <td colSpan={columns.length + 1} style={{ height: topSpacerHeight }} />
+                  <td
+                    colSpan={leaves.length + 1}
+                    style={{ height: topSpacerHeight }}
+                  />
                 </tr>
               )}
               {visibleRows.map(({ index, row }, sliceIdx) => {
@@ -1197,9 +1642,11 @@ export function ResultsTable({
                       ref={isFirst ? firstRenderedRowRef : null}
                       className="virt-row virt-row-loading"
                     >
-                      <td className="row-number" style={rowNumberStyle}>{(index + 1).toLocaleString()}</td>
-                      {columns.map((col, colIdx) => (
-                        <td key={colIdx} className="cell-loading">
+                      <td className="row-number" style={rowNumberStyle}>
+                        {(index + 1).toLocaleString()}
+                      </td>
+                      {leaves.map((leaf) => (
+                        <td key={leaf.key} className="cell-loading">
                           <span className="cell-skeleton" />
                         </td>
                       ))}
@@ -1219,15 +1666,33 @@ export function ResultsTable({
                     >
                       {(index + 1).toLocaleString()}
                     </td>
-                    {columns.map((col, colIdx) => (
+                    {leaves.map((leaf, leafIdx) => (
                       <td
-                        key={colIdx}
-                        className={isCellSelected(index, colIdx) ? 'selected' : ''}
-                        style={columnWidths[col] ? { width: columnWidths[col], minWidth: columnWidths[col], maxWidth: columnWidths[col] } : undefined}
-                        onClick={(e) => handleCellClick(index, colIdx, e)}
-                        onDoubleClick={() => handleCellDoubleClick(index, colIdx)}
+                        key={leaf.key}
+                        className={
+                          isCellSelected(index, leafIdx) ? "selected" : ""
+                        }
+                        style={
+                          columnWidths[leaf.key]
+                            ? {
+                                width: columnWidths[leaf.key],
+                                minWidth: columnWidths[leaf.key],
+                                maxWidth: columnWidths[leaf.key],
+                              }
+                            : undefined
+                        }
+                        onClick={(e) => handleCellClick(index, leafIdx, e)}
+                        onDoubleClick={() =>
+                          handleCellDoubleClick(index, leafIdx)
+                        }
                       >
-                        <CellValue value={row[col]} />
+                        <CellValue
+                          value={
+                            leaf.isNested
+                              ? getValueAtPath(row, leaf.path)
+                              : row[leaf.path[0]]
+                          }
+                        />
                       </td>
                     ))}
                   </tr>
@@ -1235,7 +1700,10 @@ export function ResultsTable({
               })}
               {bottomSpacerHeight > 0 && (
                 <tr aria-hidden className="virt-spacer">
-                  <td colSpan={columns.length + 1} style={{ height: bottomSpacerHeight }} />
+                  <td
+                    colSpan={leaves.length + 1}
+                    style={{ height: bottomSpacerHeight }}
+                  />
                 </tr>
               )}
             </tbody>
@@ -1254,21 +1722,31 @@ export function ResultsTable({
               disabled={copyLoading}
               tooltipPosition="top"
             />
-            <PopoverMenu trigger={
-              <IconButton icon={<Download size={14} />} tooltip="Export to file">
-                <ChevronDown size={12} />
-              </IconButton>
-            }>
+            <PopoverMenu
+              trigger={
+                <IconButton
+                  icon={<Download size={14} />}
+                  tooltip="Export to file"
+                >
+                  <ChevronDown size={12} />
+                </IconButton>
+              }
+            >
               <button onClick={() => handleExport('csv')}>CSV</button>
               <button onClick={() => handleExport('parquet')}>Parquet</button>
               <button onClick={() => handleExport('json')}>JSON</button>
               <button onClick={() => handleExport('jsonl')}>JSONL</button>
             </PopoverMenu>
-            <PopoverMenu trigger={
-              <IconButton icon={<ExternalLink size={14} />} tooltip={`Open in new tab (up to ${maxCopyRows.toLocaleString()} rows)`}>
-                <ChevronDown size={12} />
-              </IconButton>
-            }>
+            <PopoverMenu
+              trigger={
+                <IconButton
+                  icon={<ExternalLink size={14} />}
+                  tooltip={`Open in new tab (up to ${maxCopyRows.toLocaleString()} rows)`}
+                >
+                  <ChevronDown size={12} />
+                </IconButton>
+              }
+            >
               <button onClick={() => handleExport('csv-tab')}>CSV</button>
               <button onClick={() => handleExport('json-tab')}>JSON</button>
             </PopoverMenu>
@@ -1322,15 +1800,21 @@ function useResizeHandle(
 interface RowNumberHeaderProps {
   width: number;
   onResize: (width: number) => void;
+  rowSpan?: number;
 }
 
-function RowNumberHeader({ width, onResize }: RowNumberHeaderProps) {
+function RowNumberHeader({
+  width,
+  onResize,
+  rowSpan = 1,
+}: RowNumberHeaderProps) {
   const thRef = useRef<HTMLTableCellElement>(null);
   const handleMouseDown = useResizeHandle(thRef, onResize);
   return (
     <th
       ref={thRef}
       className="row-number-header"
+      rowSpan={rowSpan}
       style={{ width, minWidth: width, maxWidth: width }}
     >
       #
@@ -1346,65 +1830,125 @@ interface ResizableHeaderProps {
   sortDirection: 'asc' | 'desc' | null;
   isSelected: boolean;
   hasFilter?: boolean;
-  onSort: () => void;
+  /** Rows this header cell spans in a grouped (nested-column) header. */
+  rowSpan?: number;
+  /** Text copied by the header copy button; defaults to the column label. */
+  copyText?: string;
+  /** Omitted for nested sub-columns (server-side sort needs a top-level column). */
+  onSort?: () => void;
   onResize: (width: number) => void;
   onSelect: (e: React.MouseEvent) => void;
-  onOpenStats: () => void;
+  /** Omitted for nested sub-columns (stats run on top-level columns). */
+  onOpenStats?: () => void;
   onOpenFilter?: (e: React.MouseEvent) => void;
 }
 
-function ResizableHeader({ column, width, isSorted, sortDirection, isSelected, hasFilter, onSort, onResize, onSelect, onOpenStats, onOpenFilter }: ResizableHeaderProps) {
+function ResizableHeader({
+  column,
+  width,
+  isSorted,
+  sortDirection,
+  isSelected,
+  hasFilter,
+  rowSpan = 1,
+  copyText,
+  onSort,
+  onResize,
+  onSelect,
+  onOpenStats,
+  onOpenFilter,
+}: ResizableHeaderProps) {
   const thRef = useRef<HTMLTableCellElement>(null);
   const [isResizing, setIsResizing] = useState(false);
 
-  const handleMouseDown = useCallback((e: React.MouseEvent) => {
-    e.preventDefault();
-    e.stopPropagation();
-    const startX = e.clientX;
-    const startWidth = thRef.current?.offsetWidth || 100;
-    const handleMouseMove = (e: MouseEvent) => {
-      const delta = e.clientX - startX;
-      onResize(startWidth + delta);
-    };
-    const handleMouseUp = () => {
-      setIsResizing(false);
-      document.removeEventListener('mousemove', handleMouseMove);
-      document.removeEventListener('mouseup', handleMouseUp);
-      document.body.style.cursor = '';
-      document.body.style.userSelect = '';
-    };
-    setIsResizing(true);
-    document.body.style.cursor = 'col-resize';
-    document.body.style.userSelect = 'none';
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', handleMouseUp);
-  }, [onResize]);
+  const handleMouseDown = useCallback(
+    (e: React.MouseEvent) => {
+      e.preventDefault();
+      e.stopPropagation();
+      const startX = e.clientX;
+      const startWidth = thRef.current?.offsetWidth || 100;
+      const handleMouseMove = (e: MouseEvent) => {
+        const delta = e.clientX - startX;
+        onResize(startWidth + delta);
+      };
+      const handleMouseUp = () => {
+        setIsResizing(false);
+        document.removeEventListener("mousemove", handleMouseMove);
+        document.removeEventListener("mouseup", handleMouseUp);
+        document.body.style.cursor = "";
+        document.body.style.userSelect = "";
+      };
+      setIsResizing(true);
+      document.body.style.cursor = "col-resize";
+      document.body.style.userSelect = "none";
+      document.addEventListener("mousemove", handleMouseMove);
+      document.addEventListener("mouseup", handleMouseUp);
+    },
+    [onResize],
+  );
 
   return (
     <th
       ref={thRef}
+      rowSpan={rowSpan}
       className={`${isSorted ? 'sorted' : ''} ${isResizing ? 'resizing' : ''} ${isSelected ? 'col-selected' : ''} ${hasFilter ? 'has-filter' : ''}`}
       style={width ? { width, minWidth: width, maxWidth: width } : undefined}
     >
       <div className="th-content">
-        <span className="col-name" onClick={onSelect}>{column}</span>
+        <span className="col-name" onClick={onSelect}>
+          {column}
+        </span>
         <div className="th-actions">
-          <CopyButton text={column} title={`Copy "${column}"`} className="th-copy-btn" size={12} />
+          <CopyButton
+            text={copyText ?? column}
+            title={`Copy "${copyText ?? column}"`}
+            className="th-copy-btn"
+            size={12}
+          />
           {onOpenFilter && (
             <button
               className={`header-icon-btn filter-btn ${hasFilter ? 'active' : ''}`}
-              onClick={(e) => { e.stopPropagation(); onOpenFilter(e); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenFilter(e);
+              }}
               title={`Filter by ${column}`}
             >
               <Filter size={12} />
             </button>
           )}
-          <button className="header-icon-btn stats-btn" onClick={(e) => { e.stopPropagation(); onOpenStats(); }} title={`View stats for ${column}`}>
-            <BarChart2 size={12} />
-          </button>
-          <button className={`header-icon-btn sort-btn ${isSorted ? 'active' : ''}`} onClick={(e) => { e.stopPropagation(); onSort(); }} title={`Sort by ${column}`}>
-            {isSorted ? (sortDirection === 'asc' ? <ArrowUp size={12} /> : <ArrowDown size={12} />) : <ChevronsUpDown size={12} />}
-          </button>
+          {onOpenStats && (
+            <button
+              className="header-icon-btn stats-btn"
+              onClick={(e) => {
+                e.stopPropagation();
+                onOpenStats();
+              }}
+              title={`View stats for ${column}`}
+            >
+              <BarChart2 size={12} />
+            </button>
+          )}
+          {onSort && (
+            <button
+              className={`header-icon-btn sort-btn ${isSorted ? "active" : ""}`}
+              onClick={(e) => {
+                e.stopPropagation();
+                onSort();
+              }}
+              title={`Sort by ${column}`}
+            >
+              {isSorted ? (
+                sortDirection === "asc" ? (
+                  <ArrowUp size={12} />
+                ) : (
+                  <ArrowDown size={12} />
+                )
+              ) : (
+                <ChevronsUpDown size={12} />
+              )}
+            </button>
+          )}
         </div>
       </div>
       <div className="resize-handle" onMouseDown={handleMouseDown} />
@@ -1451,7 +1995,11 @@ function CellExpansionModal({
   const displayText = useMemo(() => {
     if (isNull) return 'NULL';
     if (isJson) {
-      try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+      try {
+        return JSON.stringify(value, null, 2);
+      } catch {
+        return String(value);
+      }
     }
     return String(value);
   }, [value, isNull, isJson]);
@@ -1459,18 +2007,25 @@ function CellExpansionModal({
   const initialDraft = useMemo(() => {
     if (isNull) return '';
     if (isJson) {
-      try { return JSON.stringify(value, null, 2); } catch { return String(value); }
+      try {
+        return JSON.stringify(value, null, 2);
+      } catch {
+        return String(value);
+      }
     }
     return String(value);
   }, [value, isNull, isJson]);
 
   const [draft, setDraft] = useState(initialDraft);
   // Reset the draft when the underlying cell changes (e.g., user opens a different cell).
-  useEffect(() => { setDraft(initialDraft); }, [initialDraft]);
+  useEffect(() => {
+    setDraft(initialDraft);
+  }, [initialDraft]);
 
   // Complex types (LIST, STRUCT, MAP) — TRY_CAST won't reliably reverse the
   // JSON representation, so editing them in v1 is opt-out.
-  const isComplexType = !!columnType && /^(LIST|STRUCT|MAP|UNION)/i.test(columnType.trim());
+  const isComplexType =
+    !!columnType && /^(LIST|STRUCT|MAP|UNION)/i.test(columnType.trim());
   const editable = canEdit && !!onSave && !isComplexType;
   const isDirty = editable && draft !== initialDraft;
 
@@ -1487,12 +2042,15 @@ function CellExpansionModal({
     onSave(draft === '' ? null : draft);
   }, [editable, onSave, isDirty, isSaving, draft]);
 
-  const handleKeyDown = useCallback((e: React.KeyboardEvent<HTMLTextAreaElement>) => {
-    if (editable && (e.metaKey || e.ctrlKey) && e.key === 'Enter') {
-      e.preventDefault();
-      handleSave();
-    }
-  }, [editable, handleSave]);
+  const handleKeyDown = useCallback(
+    (e: React.KeyboardEvent<HTMLTextAreaElement>) => {
+      if (editable && (e.metaKey || e.ctrlKey) && e.key === "Enter") {
+        e.preventDefault();
+        handleSave();
+      }
+    },
+    [editable, handleSave],
+  );
 
   const title = (
     <>
@@ -1504,18 +2062,24 @@ function CellExpansionModal({
   const hint = isSaving
     ? 'Saving…'
     : !editable && canEdit && isComplexType
-    ? `Editing ${columnType ?? 'complex'} cells is not supported yet — read-only.`
-    : !canEdit
-    ? 'Read-only — file format does not support write-back, or this is a derived/limited result.'
-    : 'Edit and press ⌘↵ to save · Esc to close';
+      ? `Editing ${columnType ?? "complex"} cells is not supported yet — read-only.`
+      : !canEdit
+        ? "Read-only — file format does not support write-back, or this is a derived/limited result."
+        : "Edit and press ⌘↵ to save · Esc to close";
 
   // Custom modal action: Save button (only when editable).
   const actions = editable
-    ? [{
-        icon: isSaving ? <span className="cell-modal-spinner" /> : <Save size={14} />,
-        label: isSaving ? 'Saving…' : (isDirty ? 'Save (⌘↵)' : 'Save'),
-        onClick: handleSave,
-      }]
+    ? [
+        {
+          icon: isSaving ? (
+            <span className="cell-modal-spinner" />
+          ) : (
+            <Save size={14} />
+          ),
+          label: isSaving ? "Saving…" : isDirty ? "Save (⌘↵)" : "Save",
+          onClick: handleSave,
+        },
+      ]
     : undefined;
 
   return (
@@ -1539,7 +2103,9 @@ function CellExpansionModal({
           placeholder="(empty = NULL)"
         />
       ) : isJson ? (
-        <pre className="modal-content modal-json"><JsonSyntaxHighlight json={displayText} /></pre>
+        <pre className="modal-content modal-json">
+          <JsonSyntaxHighlight json={displayText} />
+        </pre>
       ) : (
         <textarea
           ref={textareaRef}

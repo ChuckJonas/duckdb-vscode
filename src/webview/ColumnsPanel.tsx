@@ -20,6 +20,10 @@ type SortOption = 'default' | 'name-asc' | 'name-desc' | 'unique-asc' | 'unique-
 interface ColumnsPanelProps {
   columns: string[];
   onClose: () => void;
+  /**
+   * Request stats for a column. `columnName` is the dotted label used as
+   * the stats-cache key (e.g. `s.x` for an expanded STRUCT leaf).
+   */
   onRequestStats: (columnName: string) => void;
   columnStats: Record<string, ColumnStats | null>;
   loadingStats: string | null;
@@ -323,7 +327,7 @@ function ColumnRow({ summary, isExpanded, onClick, stats, isLoading, error, high
           size={12}
         />
         <Tooltip content={<span className="column-type-tooltip">{summary.inferredType}</span>} position="right">
-          <span className="column-type-icon">
+          <span className={`column-type-icon ${summary.isNested ? 'nested' : ''}`}>
             <TypeIcon size={14} />
           </span>
         </Tooltip>
