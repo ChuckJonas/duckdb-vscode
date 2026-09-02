@@ -7,12 +7,12 @@
  * URI format: duckdb-table:///database/schema/tableName?view=true
  */
 import * as vscode from "vscode";
-import { getDuckDBService } from "../services/duckdb";
-import {
-  setupOverviewWebview,
-  type OverviewDataSource,
-  type DataOverviewMetadata,
-} from "./overviewHandler";
+import { setupOverviewWebview } from "./overviewHandler";
+import { createTableSource } from "./tableDataSource";
+import { DataFileEditorProvider } from "./DataFileEditorProvider";
+
+/** URI scheme owned by this editor. */
+export const TABLE_URI_SCHEME = "duckdb-table";
 
 // ============================================================================
 // Virtual URI helpers
@@ -28,7 +28,7 @@ export function buildTableUri(
   isView: boolean
 ): vscode.Uri {
   return vscode.Uri.parse(
-    `duckdb-table:///${encodeURIComponent(database)}/${encodeURIComponent(
+    `${TABLE_URI_SCHEME}:///${encodeURIComponent(database)}/${encodeURIComponent(
       schema
     )}/${encodeURIComponent(tableName)}${isView ? "?view=true" : ""}`
   );
@@ -110,45 +110,28 @@ export class TableEditorProvider
     document: TableDocument,
     webviewPanel: vscode.WebviewPanel
   ): Promise<void> {
+    // The selector for this editor is "*" so VS Code lets it open the
+    // duckdb-table: URIs built by the explorer. That also puts it in the
+    // "Open With…" list for real files, where a filesystem path is not a
+    // catalog/schema/table triple — hand those to the data file viewer,
+    // which knows how to open data files and database files.
+    if (document.uri.scheme !== TABLE_URI_SCHEME) {
+      await vscode.commands.executeCommand(
+        "vscode.openWith",
+        document.uri,
+        DataFileEditorProvider.viewType
+      );
+      webviewPanel.dispose();
+      return;
+    }
+
     const { database, schema, tableName, isView } = parseTableUri(document.uri);
-    const db = getDuckDBService();
-    const qualifiedName = `"${database}"."${schema}"."${tableName}"`;
-
-    const source: OverviewDataSource = {
-      async getMetadata(): Promise<DataOverviewMetadata> {
-        const metadata = await db.getTableMetadata(database, schema, tableName);
-        return {
-          sourceKind: "table",
-          displayName: tableName,
-          database,
-          schema,
-          tableName,
-          isView,
-          rowCount: metadata.rowCount,
-          columns: metadata.columns,
-        };
-      },
-
-      async getSummaries() {
-        return db.getTableSummaries(database, schema, tableName);
-      },
-
-      async getColumnStats(column: string) {
-        return db.getTableColumnStats(database, schema, tableName, column);
-      },
-
-      buildSelectSql(columns?: string[], limit?: number): string {
-        const colList =
-          columns && columns.length > 0
-            ? columns.map((c) => `"${c}"`).join(", ")
-            : "*";
-        let sql = `SELECT ${colList} FROM ${qualifiedName}`;
-        if (limit) {
-          sql += ` LIMIT ${limit}`;
-        }
-        return sql;
-      },
-    };
+    const source = createTableSource({
+      database,
+      schema,
+      tableName,
+      isView,
+    });
 
     setupOverviewWebview(webviewPanel, this.context, source);
   }

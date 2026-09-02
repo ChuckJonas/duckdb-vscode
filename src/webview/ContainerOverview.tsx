@@ -38,6 +38,11 @@ export function ContainerOverview({ metadata }: ContainerOverviewProps) {
   const [expandedTable, setExpandedTable] = useState<string | null>(null);
 
   const totalRows = tables.reduce((sum, t) => sum + t.rowCount, 0);
+  // Workbooks hold sheets; database files hold tables and views.
+  const isWorkbook = fileType.toLowerCase() === 'xlsx' || fileType.toLowerCase() === 'xls';
+  const entityLabel = isWorkbook
+    ? (tables.length === 1 ? 'sheet' : 'sheets')
+    : (tables.length === 1 ? 'table' : 'tables');
 
   const handleOpenTable = useCallback((tableId: string) => {
     const vscode = getVscodeApi();
@@ -59,7 +64,7 @@ export function ContainerOverview({ metadata }: ContainerOverviewProps) {
         </div>
         <div className="file-overview-stats">
           <span className="file-overview-stat">
-            {tables.length} {tables.length === 1 ? 'sheet' : 'sheets'}
+            {tables.length} {entityLabel}
           </span>
           <span className="file-overview-stat-sep">&middot;</span>
           <span className="file-overview-stat">

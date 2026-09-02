@@ -1,17 +1,25 @@
 /**
  * DataFileEditorProvider - Custom readonly editor for data files
  *
- * Opens parquet, CSV, JSON, JSONL, and Excel files with DuckDB, displaying
- * query results in the same React webview used for regular query results.
+ * Opens parquet, CSV, JSON, JSONL, Excel and DuckDB database files with
+ * DuckDB, displaying query results in the same React webview used for regular
+ * query results.
  *
- * For xlsx files with multiple sheets, shows a container overview first
- * that lets the user pick a sheet before drilling into the column view.
+ * For containers — xlsx workbooks with multiple sheets and database files —
+ * a container overview is shown first that lets the user pick a sheet/table
+ * before drilling into the column view.
  */
 import * as vscode from "vscode";
 import * as path from "path";
 import { getDuckDBService } from "../services/duckdb";
+import {
+  acquireDatabaseAttachment,
+  type DatabaseAttachment,
+} from "../services/databaseAttachments";
+import { getSchemas, getTables } from "../services/databaseManager";
 import { installAndLoadExtension } from "../services/extensionsService";
 import { getXlsxSheetNames } from "../services/xlsxSheetReader";
+import { createTableSource } from "./tableDataSource";
 import {
   setupOverviewWebview,
   setupMultiTableOverviewWebview,
@@ -20,6 +28,15 @@ import {
   type DataOverviewMetadata,
   type ContainerOverviewMetadata,
 } from "./overviewHandler";
+
+/**
+ * Extensions opened by attaching the file as a DuckDB catalog instead of
+ * scanning it as a single data file.
+ */
+const DATABASE_FILE_TYPES: Record<string, true> = {
+  duckdb: true,
+  ddb: true,
+};
 
 class DataFileDocument implements vscode.CustomDocument {
   constructor(public readonly uri: vscode.Uri) {}
@@ -60,6 +77,11 @@ export class DataFileEditorProvider
     const fileType = fileTypeMap[ext] || ext;
     const fileName = path.basename(document.uri.fsPath);
     const documentUri = document.uri;
+
+    if (DATABASE_FILE_TYPES[fileType]) {
+      this.resolveDatabaseEditor(webviewPanel, document.uri, fileName, fileType);
+      return;
+    }
 
     if (fileType === "xlsx") {
       await this.resolveExcelEditor(
@@ -131,6 +153,100 @@ export class DataFileEditorProvider
     setupOverviewWebview(webviewPanel, this.context, source, {
       autoLoad: getAutoLoadOptions(),
     });
+  }
+
+  /**
+   * Handle DuckDB database files: attach the file as a catalog and show its
+   * tables/views as a container the user can drill into.
+   *
+   * A database file cannot be scanned like a parquet/CSV file — its contents
+   * are only reachable through ATTACH — so this path never builds a
+   * `FROM '<file>'` query.
+   */
+  private resolveDatabaseEditor(
+    webviewPanel: vscode.WebviewPanel,
+    documentUri: vscode.Uri,
+    fileName: string,
+    fileType: string
+  ): void {
+    const db = getDuckDBService();
+    const dbFilePath = documentUri.fsPath;
+
+    // Attaching is deferred to the first metadata request so failures (not a
+    // database, locked by another process) surface in the webview's error UI
+    // rather than as a generic "cannot open editor" placeholder.
+    let attachment: Promise<DatabaseAttachment> | undefined;
+    let alias: string | undefined;
+
+    webviewPanel.onDidDispose(() => {
+      void attachment?.then((held) => held.release()).catch(() => {});
+    });
+
+    const multiSource: MultiTableDataSource = {
+      async getContainerMetadata(): Promise<ContainerOverviewMetadata> {
+        attachment ??= acquireDatabaseAttachment(dbFilePath);
+        const database = (await attachment).alias;
+        alias = database;
+
+        const queryFn = async (sql: string) => ({ rows: await db.query(sql) });
+        const [stat, schemas] = await Promise.all([
+          vscode.workspace.fs.stat(documentUri),
+          getSchemas(queryFn, database),
+        ]);
+        const [tablesPerSchema, columnsByTable] = await Promise.all([
+          Promise.all(
+            schemas.map((schema) => getTables(queryFn, database, schema.name))
+          ),
+          getColumnsByTable(queryFn, database),
+        ]);
+        // Only qualify names when the file actually uses several schemas —
+        // "main." on every row is noise.
+        const qualify = schemas.length > 1;
+
+        return {
+          sourceKind: "multi-table",
+          displayName: fileName,
+          fileType,
+          fileSize: stat.size,
+          tables: tablesPerSchema.flat().map((table) => {
+            const columns = columnsByTable[`${table.schema}.${table.name}`] ?? [];
+            return {
+              // Round-trips through the webview as an opaque id; JSON keeps
+              // schema/table names with dots or quotes intact.
+              id: JSON.stringify([
+                table.schema,
+                table.name,
+                table.type === "view",
+              ]),
+              name: qualify ? `${table.schema}.${table.name}` : table.name,
+              rowCount: table.rowCount ?? 0,
+              columnCount: columns.length,
+              columns,
+            };
+          }),
+        };
+      },
+
+      getTableSource: (tableId: string): OverviewDataSource => {
+        if (!alias) {
+          throw new Error(`Database "${fileName}" is not attached`);
+        }
+        const [schema, tableName, isView] = JSON.parse(tableId) as [
+          string,
+          string,
+          boolean
+        ];
+        return createTableSource({
+          database: alias,
+          schema,
+          tableName,
+          isView,
+          displayName: schema === "main" ? tableName : `${schema}.${tableName}`,
+        });
+      },
+    };
+
+    setupMultiTableOverviewWebview(webviewPanel, this.context, multiSource);
   }
 
   /**
@@ -284,6 +400,33 @@ export class DataFileEditorProvider
 }
 
 /**
+ * Fetch every column of every table/view in an attached database in one
+ * query, keyed by `schema.table`. One round-trip beats a DESCRIBE per table
+ * when a database file holds dozens of tables.
+ */
+async function getColumnsByTable(
+  queryFn: (sql: string) => Promise<{ rows: Record<string, unknown>[] }>,
+  database: string
+): Promise<Record<string, { name: string; type: string }[]>> {
+  const result = await queryFn(`
+    SELECT table_schema, table_name, column_name, data_type
+    FROM information_schema.columns
+    WHERE table_catalog = '${database.replace(/'/g, "''")}'
+    ORDER BY table_schema, table_name, ordinal_position
+  `);
+
+  const byTable: Record<string, { name: string; type: string }[]> = {};
+  for (const row of result.rows) {
+    const key = `${row.table_schema as string}.${row.table_name as string}`;
+    (byTable[key] ??= []).push({
+      name: row.column_name as string,
+      type: row.data_type as string,
+    });
+  }
+  return byTable;
+}
+
+/**
  * Resolve the auto-load options when opening a data file.
  * Returns undefined when openMode is "schema" (auto-load disabled).
  *
@@ -319,6 +462,11 @@ const FILE_TYPE_ASSOCIATIONS: Array<{
   {
     setting: "fileViewer.csv",
     patterns: ["*.csv", "*.tsv"],
+    defaultEnabled: true,
+  },
+  {
+    setting: "fileViewer.database",
+    patterns: ["*.duckdb", "*.ddb"],
     defaultEnabled: true,
   },
   {

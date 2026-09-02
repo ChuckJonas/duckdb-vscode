@@ -877,6 +877,11 @@
           "type": "boolean",
           "default": true,
           "markdownDescription": "Automatically open `.xlsx` files with the DuckDB data viewer.\n\nFor workbooks with multiple sheets, a sheet picker is shown first. Requires the DuckDB `excel` extension (auto-installed on first use)."
+        },
+        "duckdb.fileViewer.database": {
+          "type": "boolean",
+          "default": true,
+          "markdownDescription": "Automatically open `.duckdb` and `.ddb` database files with the DuckDB data viewer.\n\nThe file is attached (read-only when possible) and its tables and views are listed; opening one shows the usual schema/data view. The attachment is dropped when the last editor for the file closes."
         }
       }
     },
@@ -915,6 +920,12 @@
           },
           {
             "filenamePattern": "*.xlsx"
+          },
+          {
+            "filenamePattern": "*.duckdb"
+          },
+          {
+            "filenamePattern": "*.ddb"
           }
         ],
         "priority": "option"
