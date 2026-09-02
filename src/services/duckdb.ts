@@ -2,6 +2,24 @@ import { DuckDBInstance, DuckDBConnection } from "@duckdb/node-api";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs";
+import {
+  type ColumnRef,
+  type CellValue,
+  quoteColumnRef,
+  columnRefLabel,
+} from "../shared/columnRef";
+import { buildNestedColumns } from "../shared/nestedColumns";
+
+/** One row of the columns-panel summary list. */
+export interface ColumnSummaryRow {
+  /** Dotted label — `col` for top-level, `s.x` for a STRUCT leaf. */
+  name: string;
+  distinctCount: number;
+  nullPercent: number;
+  inferredType: string;
+  /** True for expanded STRUCT sub-columns. */
+  isNested?: boolean;
+}
 
 // ============================================================================
 // TYPES
@@ -29,7 +47,8 @@ export interface PageData {
   offset: number;
   pageSize: number;
   totalRows: number;
-  sortColumn?: string;
+  /** Top-level column name, or a STRUCT field path (e.g. ["s", "x"]). */
+  sortColumn?: ColumnRef;
   sortDirection?: "asc" | "desc";
 }
 
@@ -383,7 +402,6 @@ export class DuckDBService {
     );
   }
 
-
   /**
    * Generate a unique cache ID
    */
@@ -531,7 +549,9 @@ export class DuckDBService {
     pageSize: number,
     startTime: number
   ): Promise<{ meta: StatementCacheMeta; page: PageData }> {
-    if (!this.connection) throw new Error("No connection");
+    if (!this.connection) {
+      throw new Error("No connection");
+    }
 
     const cacheId = this.generateCacheId();
 
@@ -587,10 +607,14 @@ export class DuckDBService {
   private async executeUtilityStatement(
     sql: string,
     statementIndex: number,
-    pageSize: number,
-    startTime: number
+    // Utility statements aren't cached/paginated — every row is returned,
+    // so the caller's page size is accepted for signature parity only.
+    _pageSize: number,
+    startTime: number,
   ): Promise<{ meta: StatementCacheMeta; page: PageData }> {
-    if (!this.connection) throw new Error("No connection");
+    if (!this.connection) {
+      throw new Error("No connection");
+    }
 
     const reader = await this.connection.runAndReadAll(sql);
     const columns = reader.columnNames();
@@ -634,7 +658,9 @@ export class DuckDBService {
     pageSize: number,
     startTime: number
   ): Promise<{ meta: StatementCacheMeta; page: PageData }> {
-    if (!this.connection) throw new Error("No connection");
+    if (!this.connection) {
+      throw new Error("No connection");
+    }
 
     await this.connection.run(sql);
 
@@ -670,7 +696,7 @@ export class DuckDBService {
     cacheId: string,
     offset: number,
     pageSize: number,
-    sortColumn?: string,
+    sortColumn?: ColumnRef,
     sortDirection?: "asc" | "desc",
     whereClause?: string
   ): Promise<PageData> {
@@ -701,7 +727,7 @@ export class DuckDBService {
       }
       if (sortColumn) {
         const dir = sortDirection === "desc" ? "DESC" : "ASC";
-        sql += ` ORDER BY "${sortColumn}" ${dir} NULLS LAST`;
+        sql += ` ORDER BY ${quoteColumnRef(sortColumn)} ${dir} NULLS LAST`;
       }
       sql += ` LIMIT ${pageSize} OFFSET ${offset}`;
 
@@ -751,8 +777,12 @@ export class DuckDBService {
     newValue: string | null
   ): Promise<unknown> {
     await this.initialize();
-    if (!this.connection) throw new Error("DuckDB connection not available");
-    if (!cacheId) throw new Error("Cannot edit utility-statement results");
+    if (!this.connection) {
+      throw new Error("DuckDB connection not available");
+    }
+    if (!cacheId) {
+      throw new Error("Cannot edit utility-statement results");
+    }
     if (!Number.isFinite(Number(rowid))) {
       throw new Error(`Invalid rowid: ${rowid}`);
     }
@@ -794,8 +824,12 @@ export class DuckDBService {
     format: "parquet" | "csv" | "tsv" | "json" | "jsonl" | "ndjson"
   ): Promise<void> {
     await this.initialize();
-    if (!this.connection) throw new Error("DuckDB connection not available");
-    if (!cacheId) throw new Error("No cache to write back");
+    if (!this.connection) {
+      throw new Error("DuckDB connection not available");
+    }
+    if (!cacheId) {
+      throw new Error("No cache to write back");
+    }
 
     let copyOpts: string;
     switch (format) {
@@ -852,7 +886,7 @@ export class DuckDBService {
    */
   async getColumnDistinctValues(
     cacheId: string,
-    column: string,
+    column: ColumnRef,
     limit: number = 100,
     searchTerm?: string
   ): Promise<{ value: string; count: number }[]> {
@@ -867,7 +901,7 @@ export class DuckDBService {
     }
 
     try {
-      const escapedCol = `"${column}"`;
+      const escapedCol = quoteColumnRef(column);
       let sql = `
         SELECT 
           ${escapedCol}::VARCHAR as value,
@@ -905,7 +939,10 @@ export class DuckDBService {
    * Get column cardinality (approximate distinct count).
    * Used to determine which filter UI to show.
    */
-  async getColumnCardinality(cacheId: string, column: string): Promise<number> {
+  async getColumnCardinality(
+    cacheId: string,
+    column: ColumnRef,
+  ): Promise<number> {
     await this.initialize();
 
     if (!this.connection || !cacheId) {
@@ -913,7 +950,9 @@ export class DuckDBService {
     }
 
     try {
-      const sql = `SELECT COUNT(DISTINCT "${column}") as cardinality FROM "${cacheId}"`;
+      const sql = `SELECT COUNT(DISTINCT ${quoteColumnRef(
+        column,
+      )}) as cardinality FROM "${cacheId}"`;
       const reader = await this.connection.runAndReadAll(sql);
       return Number(
         (reader.getRowObjectsJS()[0] as Record<string, unknown>).cardinality
@@ -933,7 +972,7 @@ export class DuckDBService {
     format: "csv" | "parquet" | "json" | "jsonl",
     filePath: string,
     maxRows?: number,
-    sortColumn?: string,
+    sortColumn?: ColumnRef,
     sortDirection?: "asc" | "desc",
     whereClause?: string
   ): Promise<void> {
@@ -955,7 +994,7 @@ export class DuckDBService {
       }
       if (sortColumn) {
         const dir = sortDirection === "desc" ? "DESC" : "ASC";
-        innerSql += ` ORDER BY "${sortColumn}" ${dir} NULLS LAST`;
+        innerSql += ` ORDER BY ${quoteColumnRef(sortColumn)} ${dir} NULLS LAST`;
       }
       if (maxRows) {
         innerSql += ` LIMIT ${maxRows}`;
@@ -997,9 +1036,9 @@ export class DuckDBService {
   async getCopyData(
     cacheId: string,
     maxRows: number,
-    sortColumn?: string,
+    sortColumn?: ColumnRef,
     sortDirection?: "asc" | "desc"
-  ): Promise<{ columns: string[]; rows: Record<string, unknown>[] }> {
+  ): Promise<{ columns: string[]; rows: Record<string, CellValue>[] }> {
     await this.initialize();
 
     if (!this.connection) {
@@ -1014,7 +1053,7 @@ export class DuckDBService {
       let sql = `SELECT * FROM "${cacheId}"`;
       if (sortColumn) {
         const dir = sortDirection === "desc" ? "DESC" : "ASC";
-        sql += ` ORDER BY "${sortColumn}" ${dir} NULLS LAST`;
+        sql += ` ORDER BY ${quoteColumnRef(sortColumn)} ${dir} NULLS LAST`;
       }
       sql += ` LIMIT ${maxRows}`;
 
@@ -1038,7 +1077,7 @@ export class DuckDBService {
    */
   async getCacheColumnStats(
     cacheId: string,
-    column: string,
+    column: ColumnRef,
     whereClause?: string
   ): Promise<ColumnStats> {
     await this.initialize();
@@ -1051,7 +1090,7 @@ export class DuckDBService {
       throw new Error("No cache available for stats");
     }
 
-    const escapedCol = `"${column}"`;
+    const escapedCol = quoteColumnRef(column);
     const whereFilter = whereClause ? `WHERE ${whereClause}` : "";
 
     // Basic stats query
@@ -1087,8 +1126,8 @@ export class DuckDBService {
         END as col_type
       FROM "${cacheId}" 
       WHERE ${escapedCol} IS NOT NULL ${
-      whereClause ? `AND (${whereClause})` : ""
-    }
+        whereClause ? `AND (${whereClause})` : ""
+      }
       LIMIT 1
     `;
     const typeCheckReader = await this.connection.runAndReadAll(typeCheckSql);
@@ -1103,9 +1142,10 @@ export class DuckDBService {
     const isDate = detectedType === "date";
     const isNumeric = detectedType === "numeric" && !isBoolean;
 
-    // Build the base stats object
+    // Build the base stats object. `column` is the dotted label so the
+    // webview can key stats by leaf (e.g. "s.x").
     const stats: ColumnStats = {
-      column,
+      column: columnRefLabel(column),
       type: isDate ? "date" : isNumeric ? "numeric" : "string",
       total: Number(basicRow.total) || 0,
       nonNull: Number(basicRow.non_null) || 0,
@@ -1136,7 +1176,9 @@ export class DuckDBService {
     escapedCol: string,
     whereClause?: string
   ): Promise<void> {
-    if (!this.connection) return;
+    if (!this.connection) {
+      return;
+    }
 
     const baseFilter = `${escapedCol} IS NOT NULL`;
     const fullFilter = whereClause
@@ -1254,7 +1296,9 @@ export class DuckDBService {
     escapedCol: string,
     whereClause?: string
   ): Promise<void> {
-    if (!this.connection) return;
+    if (!this.connection) {
+      return;
+    }
 
     const baseFilter = `${escapedCol} IS NOT NULL`;
     const fullFilter = whereClause
@@ -1312,7 +1356,9 @@ export class DuckDBService {
     escapedCol: string,
     whereClause?: string
   ): Promise<void> {
-    if (!this.connection) return;
+    if (!this.connection) {
+      return;
+    }
 
     const baseFilter = `${escapedCol} IS NOT NULL`;
     const fullFilter = whereClause
@@ -1335,7 +1381,9 @@ export class DuckDBService {
         unknown
       >;
 
-      if (!rangeRow.min_date || !rangeRow.max_date) return;
+      if (!rangeRow.min_date || !rangeRow.max_date) {
+        return;
+      }
 
       const minDate = new Date(String(rangeRow.min_date));
       const maxDate = new Date(String(rangeRow.max_date));
@@ -1417,8 +1465,9 @@ export class DuckDBService {
    * Returns distinct count, null percentage, and column type for each column.
    */
   async getCacheColumnSummaries(
-    cacheId: string
-  ): Promise<Record<string, unknown>[]> {
+    cacheId: string,
+    nestedMaxDepth: number = 0,
+  ): Promise<ColumnSummaryRow[]> {
     await this.initialize();
 
     if (!this.connection) {
@@ -1436,14 +1485,78 @@ export class DuckDBService {
       const reader = await this.connection.runAndReadAll(sql);
       const rows = reader.getRowObjectsJS() as Record<string, unknown>[];
 
-      return rows.map((row) => ({
-        name: row.column_name as string,
+      const topLevel: ColumnSummaryRow[] = rows.map((row) => ({
+        name: String(row.column_name),
         distinctCount: Number(row.approx_unique) || 0,
         nullPercent: Number(row.null_percentage) || 0,
-        inferredType: row.column_type as string,
+        inferredType: String(row.column_type),
       }));
+
+      if (nestedMaxDepth <= 0) {
+        return topLevel;
+      }
+
+      const nested = await this.summarizeNestedLeaves(
+        cacheId,
+        topLevel,
+        nestedMaxDepth,
+      );
+      return [...topLevel, ...nested];
     } catch (e) {
       console.error("SUMMARIZE query failed:", e);
+      return [];
+    }
+  }
+
+  /**
+   * Summarize STRUCT sub-columns by SUMMARIZE-ing a projection that pulls
+   * each expanded leaf out as its own top-level column. DuckDB's SUMMARIZE
+   * only reports top-level columns, so nested leaves would otherwise be
+   * missing from the columns panel.
+   */
+  private async summarizeNestedLeaves(
+    cacheId: string,
+    topLevel: ColumnSummaryRow[],
+    nestedMaxDepth: number,
+  ): Promise<ColumnSummaryRow[]> {
+    if (!this.connection) {
+      return [];
+    }
+
+    const model = buildNestedColumns(
+      topLevel.map((c) => c.name),
+      topLevel.map((c) => c.inferredType),
+      nestedMaxDepth,
+    );
+    const nestedLeaves = model.leaves.filter((l) => l.isNested);
+    if (nestedLeaves.length === 0) {
+      return [];
+    }
+
+    // Alias each leaf to its dotted label so SUMMARIZE reports it by that
+    // name, matching the key the webview uses for its stats cache.
+    const projection = nestedLeaves
+      .map((leaf) => {
+        const label = columnRefLabel(leaf.path).replace(/"/g, '""');
+        return `${quoteColumnRef(leaf.path)} AS "${label}"`;
+      })
+      .join(", ");
+
+    try {
+      const reader = await this.connection.runAndReadAll(
+        `SUMMARIZE (SELECT ${projection} FROM "${cacheId}")`,
+      );
+      const rows = reader.getRowObjectsJS() as Record<string, unknown>[];
+      return rows.map((row) => ({
+        name: String(row.column_name),
+        distinctCount: Number(row.approx_unique) || 0,
+        nullPercent: Number(row.null_percentage) || 0,
+        inferredType: String(row.column_type),
+        isNested: true,
+      }));
+    } catch (e) {
+      // Nested summaries are best-effort; the flat ones still render.
+      console.error("Nested SUMMARIZE query failed:", e);
       return [];
     }
   }
@@ -2086,10 +2199,7 @@ export class DuckDBService {
         fs.rmSync(this.ownedTempDir, { recursive: true, force: true });
         console.log(`🦆 Removed temp dir ${this.ownedTempDir}`);
       } catch (e) {
-        console.warn(
-          `🦆 Failed to remove temp dir ${this.ownedTempDir}:`,
-          e
-        );
+        console.warn(`🦆 Failed to remove temp dir ${this.ownedTempDir}:`, e);
       }
       this.ownedTempDir = null;
     }
@@ -2112,7 +2222,9 @@ export function collectCacheIds(result: MultiQueryResultWithPages): string[] {
  */
 function formatHistogramBucket(binStart: number, binEnd: number): string {
   const formatNum = (n: number) => {
-    if (Number.isInteger(n) && Math.abs(n) < 10000) return n.toString();
+    if (Number.isInteger(n) && Math.abs(n) < 10000) {
+      return n.toString();
+    }
     return n.toFixed(1);
   };
   return `${formatNum(binStart)}-${formatNum(binEnd)}`;
@@ -2246,8 +2358,8 @@ export function splitSqlStatements(
 function serializeRow(
   row: Record<string, unknown>,
   columns: string[]
-): Record<string, unknown> {
-  const result: Record<string, unknown> = {};
+): Record<string, CellValue> {
+  const result: Record<string, CellValue> = {};
 
   for (const col of columns) {
     result[col] = serializeValue(row[col]);
@@ -2259,7 +2371,7 @@ function serializeRow(
 /**
  * Serialize a single value to be JSON-safe
  */
-function serializeValue(value: unknown): unknown {
+function serializeValue(value: unknown): CellValue {
   if (value === null || value === undefined) {
     return null;
   }
@@ -2284,14 +2396,23 @@ function serializeValue(value: unknown): unknown {
   }
 
   if (typeof value === "object" && value !== null) {
-    const obj: Record<string, unknown> = {};
+    const obj: Record<string, CellValue> = {};
     for (const [k, v] of Object.entries(value)) {
       obj[k] = serializeValue(v);
     }
     return obj;
   }
 
-  return value;
+  if (
+    typeof value === "string" ||
+    typeof value === "number" ||
+    typeof value === "boolean"
+  ) {
+    return value;
+  }
+
+  // Anything else (symbol, function, …) can't cross the webview boundary.
+  return String(value);
 }
 
 // ============================================================================

@@ -1,5 +1,6 @@
 import React from 'react';
 import { X, Filter, Play, Pause, Plus } from 'lucide-react';
+import { type ColumnRef, quoteColumnRef, columnRefLabel } from '../../shared/columnRef';
 
 // ============================================================================
 // FILTER TYPES
@@ -15,9 +16,18 @@ export type FilterOperator =
 
 export interface ColumnFilter {
   id: string;
-  column: string;
+  /**
+   * Top-level column name, or a path into a STRUCT column
+   * (e.g. `['s', 'x']` for `s.x`). Quoted segment-by-segment for SQL.
+   */
+  column: ColumnRef;
   operator: FilterOperator;
   value: string | number | string[] | [number, number] | [string, string] | null;
+}
+
+/** Dotted display label for a filter's column (e.g. `s.x`). */
+export function filterColumnLabel(filter: ColumnFilter): string {
+  return columnRefLabel(filter.column);
 }
 
 export interface FilterState {
@@ -70,7 +80,7 @@ export function formatFilterValue(filter: ColumnFilter): string {
 }
 
 export function filterToSql(filter: ColumnFilter): string {
-  const col = `"${filter.column}"`;
+  const col = quoteColumnRef(filter.column);
   const { operator, value } = filter;
   
   switch (operator) {
@@ -180,7 +190,7 @@ export function FilterBar({
         <div className="filter-chips">
           {filters.map((filter) => (
             <div key={filter.id} className="filter-chip">
-              <span className="filter-chip-column">{filter.column}</span>
+              <span className="filter-chip-column">{filterColumnLabel(filter)}</span>
               <span className="filter-chip-value">{formatFilterValue(filter)}</span>
               <button 
                 className="filter-chip-remove" 

@@ -2,6 +2,7 @@ import React, { useState, useEffect, useRef, useMemo } from 'react';
 import { X } from 'lucide-react';
 import { IconButton } from './IconButton';
 import { ColumnFilter, FilterOperator, generateFilterId } from './FilterBar';
+import type { ColumnRef } from '../../shared/columnRef';
 
 interface DistinctValue {
   value: string;
@@ -9,12 +10,18 @@ interface DistinctValue {
 }
 
 interface ColumnInfo {
+  /** Dotted display label (e.g. `s.x`). Unique per leaf column. */
   name: string;
+  /** Column reference used for SQL — a name or a STRUCT field path. */
+  path: ColumnRef;
   type: string;
 }
 
 interface ColumnFilterPopoverProps {
+  /** Dotted display label of the active column. */
   column: string;
+  /** Column reference used when building the filter's SQL. */
+  columnPath: ColumnRef;
   columnType: string;
   columns?: ColumnInfo[];  // All available columns for selection
   distinctValues: DistinctValue[];
@@ -22,7 +29,8 @@ interface ColumnFilterPopoverProps {
   isLoading: boolean;
   onClose: () => void;
   onApply: (filter: ColumnFilter) => void;
-  onColumnChange?: (column: string, columnType: string) => void;  // Called when user selects different column
+  // Called when user selects different column
+  onColumnChange?: (column: string, columnType: string, columnPath: ColumnRef) => void;
   position: { top: number; left: number };
 }
 
@@ -42,6 +50,7 @@ function isDateType(type: string): boolean {
 
 export function ColumnFilterPopover({
   column,
+  columnPath,
   columnType,
   columns,
   distinctValues,
@@ -102,7 +111,7 @@ export function ColumnFilterPopover({
       setTextValue('');
       setRangeMin('');
       setRangeMax('');
-      onColumnChange(newColumn, colInfo.type);
+      onColumnChange(newColumn, colInfo.type, colInfo.path);
     }
   };
   
@@ -160,7 +169,7 @@ export function ColumnFilterPopover({
     if (showMultiSelect && selectedValues.size > 0) {
       onApply({
         id: generateFilterId(),
-        column,
+        column: columnPath,
         operator: 'in',
         value: Array.from(selectedValues),
       });
@@ -174,7 +183,7 @@ export function ColumnFilterPopover({
         : [rangeMin, rangeMax];
       onApply({
         id: generateFilterId(),
-        column,
+        column: columnPath,
         operator: 'between',
         value,
       });
@@ -193,7 +202,7 @@ export function ColumnFilterPopover({
       
       onApply({
         id: generateFilterId(),
-        column,
+        column: columnPath,
         operator,
         value,
       });

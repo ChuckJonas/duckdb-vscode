@@ -27,6 +27,8 @@ interface AppState {
   containerMetadata: ContainerOverviewMetadata | null;
   pageSize: number;
   maxCopyRows: number;
+  /** Max depth for expanding STRUCT columns into nested sub-columns. */
+  nestedColumnMaxDepth: number;
   /** True when the current cache reflects the full source and write-back is supported. */
   editable: boolean;
 }
@@ -40,6 +42,7 @@ function App() {
     containerMetadata: null,
     pageSize: 1000,
     maxCopyRows: 50000,
+    nestedColumnMaxDepth: 2,
     editable: false,
   });
 
@@ -53,6 +56,10 @@ function App() {
           result: message.data,
           pageSize: message.pageSize || prev.pageSize,
           maxCopyRows: message.maxCopyRows || prev.maxCopyRows,
+          nestedColumnMaxDepth:
+            typeof message.nestedColumnMaxDepth === 'number'
+              ? message.nestedColumnMaxDepth
+              : prev.nestedColumnMaxDepth,
           editable: message.editable === true,
         }));
       } else if (message.type === 'fileMetadata') {
@@ -138,6 +145,7 @@ function App() {
         result={state.result}
         pageSize={state.pageSize}
         maxCopyRows={state.maxCopyRows}
+        nestedColumnMaxDepth={state.nestedColumnMaxDepth}
         editable={state.editable}
         onBackToOverview={showBackButton ? () => {
           setState(prev => ({ ...prev, viewMode: 'fileOverview' }));

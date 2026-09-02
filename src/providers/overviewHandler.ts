@@ -16,7 +16,9 @@ import {
   handleExport,
   linkAdHocEditor,
   unlinkAdHocEditor,
+  getNestedColumnMaxDepth,
 } from "../services/webviewService";
+import type { ColumnRef } from "../shared/columnRef";
 import type {
   DataOverviewMetadata,
   ContainerOverviewMetadata,
@@ -104,7 +106,7 @@ export function setupOverviewWebview(
 
   // Mutable state shared across message handlers
   let cacheIds: string[] = [];
-  let sortColumn: string | undefined;
+  let sortColumn: ColumnRef | undefined;
   let sortDirection: "asc" | "desc" | undefined;
   // The most recently executed query (default top-N or queryFile).
   // Used so "refresh" re-runs the last query rather than dropping back to
@@ -164,7 +166,9 @@ export function setupOverviewWebview(
   // ------------------------------------------------------------------
   async function sendMetadata(opts: { silent?: boolean } = {}): Promise<void> {
     try {
-      if (!opts.silent) sendLoadingStatus("Fetching schema…");
+      if (!opts.silent) {
+        sendLoadingStatus("Fetching schema…");
+      }
       const metadata = await source.getMetadata();
       panel.webview.postMessage({
         type: "fileMetadata",
@@ -208,6 +212,7 @@ export function setupOverviewWebview(
         data: result,
         pageSize,
         maxCopyRows,
+        nestedColumnMaxDepth: getNestedColumnMaxDepth(),
         editable: cacheIsFullSource && writeTarget !== null,
       });
     } catch (error) {
@@ -252,6 +257,7 @@ export function setupOverviewWebview(
       data: result,
       pageSize: resultPageSize,
       maxCopyRows: resultMaxCopyRows,
+      nestedColumnMaxDepth: getNestedColumnMaxDepth(),
       editable: false,
     });
   }
@@ -334,7 +340,9 @@ export function setupOverviewWebview(
           if (!target) {
             throw new Error("This file format does not support write-back.");
           }
-          if (cacheIds.length === 0) throw new Error("No cache to edit");
+          if (cacheIds.length === 0) {
+            throw new Error("No cache to edit");
+          }
           const cacheId = cacheIds[0];
           const stored = await db.updateCacheCell(
             cacheId,
@@ -473,7 +481,8 @@ export function setupOverviewWebview(
       case "requestColumnSummaries":
         try {
           const cacheSummaries = await db.getCacheColumnSummaries(
-            message.cacheId
+            message.cacheId,
+            getNestedColumnMaxDepth(),
           );
           panel.webview.postMessage({
             type: "columnSummaries",
@@ -603,7 +612,7 @@ export function setupMultiTableOverviewWebview(
   const db = getDuckDBService();
 
   let cacheIds: string[] = [];
-  let sortColumn: string | undefined;
+  let sortColumn: ColumnRef | undefined;
   let sortDirection: "asc" | "desc" | undefined;
   let activeSource: OverviewDataSource | null = null;
   let containerMeta: ContainerOverviewMetadata | null = null;
@@ -659,6 +668,7 @@ export function setupMultiTableOverviewWebview(
       data: result,
       pageSize: resultPageSize,
       maxCopyRows: resultMaxCopyRows,
+      nestedColumnMaxDepth: getNestedColumnMaxDepth(),
       editable: false,
     });
   }
@@ -694,7 +704,9 @@ export function setupMultiTableOverviewWebview(
   }
 
   async function sendTableMetadata(): Promise<void> {
-    if (!activeSource) return;
+    if (!activeSource) {
+      return;
+    }
     try {
       sendLoadingStatus("Fetching schema…");
       const metadata = await activeSource.getMetadata();
@@ -750,7 +762,9 @@ export function setupMultiTableOverviewWebview(
       // ---- Single-table handlers (only active when a table is selected) ----
 
       case "queryFile": {
-        if (!activeSource) break;
+        if (!activeSource) {
+          break;
+        }
         try {
           sendLoadingStatus("Running query…");
           resetCaches();
@@ -765,6 +779,7 @@ export function setupMultiTableOverviewWebview(
             data: result,
             pageSize,
             maxCopyRows,
+            nestedColumnMaxDepth: getNestedColumnMaxDepth(),
             // Multi-table sources (xlsx) never support write-back.
             editable: false,
           });
@@ -782,7 +797,9 @@ export function setupMultiTableOverviewWebview(
           typeof message.sql === "string" && message.sql.trim().length > 0
             ? message.sql
             : activeSource?.buildSelectSql(message.columns);
-        if (!sql) break;
+        if (!sql) {
+          break;
+        }
         const doc = await vscode.workspace.openTextDocument({
           content: sql,
           language: "sql",
@@ -795,7 +812,9 @@ export function setupMultiTableOverviewWebview(
       }
 
       case "requestFileSummaries":
-        if (!activeSource) break;
+        if (!activeSource) {
+          break;
+        }
         try {
           const summaries = await activeSource.getSummaries();
           panel.webview.postMessage({
@@ -812,7 +831,9 @@ export function setupMultiTableOverviewWebview(
         break;
 
       case "requestFileColumnStats":
-        if (!activeSource) break;
+        if (!activeSource) {
+          break;
+        }
         try {
           const stats = await activeSource.getColumnStats(message.column);
           panel.webview.postMessage({
@@ -901,7 +922,8 @@ export function setupMultiTableOverviewWebview(
       case "requestColumnSummaries":
         try {
           const cacheSummaries = await db.getCacheColumnSummaries(
-            message.cacheId
+            message.cacheId,
+            getNestedColumnMaxDepth(),
           );
           panel.webview.postMessage({
             type: "columnSummaries",

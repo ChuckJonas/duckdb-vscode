@@ -136,10 +136,13 @@ export interface ContainerOverviewMetadata {
  * Used by ColumnsPanel and FileOverview.
  */
 export interface ColumnSummary {
+  /** Dotted label — `col` for top-level, `s.x` for an expanded STRUCT leaf. */
   name: string;
   distinctCount: number;
   nullPercent: number;
   inferredType: string;
+  /** True for expanded STRUCT sub-columns. */
+  isNested?: boolean;
 }
 
 // ============================================================================

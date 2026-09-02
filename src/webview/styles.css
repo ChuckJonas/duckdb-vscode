@@ -833,6 +833,29 @@ th.resizing {
   text-decoration: underline;
 }
 
+/* Grouped (nested struct) header cells */
+th.group-header {
+  text-align: center;
+  border-bottom: 1px solid var(--border-subtle);
+  border-left: 1px solid var(--border-subtle);
+  border-right: 1px solid var(--border-subtle);
+}
+
+th.group-header .group-header-content {
+  justify-content: center;
+  cursor: default;
+}
+
+th.group-header .col-name {
+  flex: 0 1 auto;
+  cursor: default;
+  color: var(--text-muted);
+}
+
+th.group-header .col-name:hover {
+  text-decoration: none;
+}
+
 /* Header Actions Container */
 .th-actions {
   display: flex;
@@ -1942,6 +1965,11 @@ button.stat-clickable.active .stat-value {
 
 .column-row:hover .column-row-copy {
   opacity: 1;
+}
+
+/* Expanded STRUCT sub-columns are visually de-emphasized in the panel. */
+.column-type-icon.nested {
+  opacity: 0.65;
 }
 
 .column-type-icon {
