@@ -2,6 +2,7 @@ import { DuckDBInstance, DuckDBConnection } from "@duckdb/node-api";
 import * as os from "os";
 import * as path from "path";
 import * as fs from "fs";
+import { CatalogService, sqlIdentifier } from "./catalogService";
 
 // ============================================================================
 // TYPES
@@ -119,7 +120,7 @@ export function buildSummarizeSql(
   schema: string,
   tableName: string
 ): string {
-  const qualifiedName = `"${database}"."${schema}"."${tableName}"`;
+  const qualifiedName = [database, schema, tableName].map(sqlIdentifier).join(".");
   return `SELECT * FROM (SUMMARIZE ${qualifiedName})`;
 }
 
@@ -320,6 +321,7 @@ export function getStatementType(sql: string): StatementType {
  * Uses temp tables to cache results for pagination, sorting, and export.
  */
 export class DuckDBService {
+  readonly catalog = new CatalogService((sql) => this.query(sql));
   private instance: DuckDBInstance | null = null;
   private connection: DuckDBConnection | null = null;
   private cacheCounter = 0;
@@ -471,6 +473,7 @@ export class DuckDBService {
           );
           results.push(result);
         }
+        this.catalog.statementExecuted(stmtSql);
       } catch (err) {
         const error = err as Error;
         // Parse error and adjust position for multi-statement offset
@@ -1498,6 +1501,7 @@ export class DuckDBService {
     return {
       run: async (sql: string) => {
         await conn.run(sql);
+        this.catalog.invalidate(false);
       },
       close: () => {
         try {
@@ -1521,7 +1525,11 @@ export class DuckDBService {
 
     try {
       await this.connection.run(sql);
+      for (const statement of splitSqlStatements(sql, -1)) {
+        this.catalog.statementExecuted(statement);
+      }
     } catch (err) {
+      this.catalog.invalidate();
       const error = err as Error;
       throw new Error(`Statement failed: ${error.message}`);
     }
@@ -1890,36 +1898,28 @@ export class DuckDBService {
   // TABLE METADATA (for database table/view overview)
   // ============================================================================
 
-  /**
-   * Get lightweight metadata for a database table or view.
-   * Runs DESCRIBE + COUNT(*) against the qualified table name.
-   */
+  /** Get catalog metadata without scanning table data or executing a view. */
   async getTableMetadata(
     database: string,
     schema: string,
     tableName: string
-  ): Promise<{ columns: { name: string; type: string }[]; rowCount: number }> {
-    await this.initialize();
-    if (!this.connection) {
-      throw new Error("DuckDB connection not available");
-    }
-
-    const qualifiedName = `"${database}"."${schema}"."${tableName}"`;
-    const [describeResult, countResult] = await Promise.all([
-      this.connection.runAndReadAll(`DESCRIBE ${qualifiedName}`),
-      this.connection.runAndReadAll(
-        `SELECT COUNT(*) as cnt FROM ${qualifiedName}`
-      ),
+  ): Promise<{ columns: { name: string; type: string }[]; rowCount?: number; rowCountIsEstimate: boolean }> {
+    const [columns, tables] = await Promise.all([
+      this.catalog.getColumns(database, schema, tableName),
+      this.catalog.getTables(database, schema),
     ]);
+    return {
+      columns: columns.map(({ name, type }) => ({ name, type })),
+      rowCount: tables.find((table) => table.name === tableName)?.rowCount,
+      rowCountIsEstimate: true,
+    };
+  }
 
-    const describeRows = describeResult.getRowObjectsJS();
-    const columns = describeRows.map((r) => ({
-      name: String(r.column_name),
-      type: String(r.column_type),
-    }));
-
-    const rowCount = Number(countResult.getRowObjectsJS()[0].cnt);
-    return { columns, rowCount };
+  /** Exact counts can evaluate expensive views, so run only when requested. */
+  async getTableRowCount(database: string, schema: string, tableName: string): Promise<number> {
+    const qualifiedName = [database, schema, tableName].map(sqlIdentifier).join(".");
+    const rows = await this.query(`SELECT COUNT(*) AS count FROM ${qualifiedName}`);
+    return Number(rows[0].count);
   }
 
   /**
@@ -1943,22 +1943,17 @@ export class DuckDBService {
       throw new Error("DuckDB connection not available");
     }
 
-    const qualifiedName = `"${database}"."${schema}"."${tableName}"`;
+    const qualifiedName = [database, schema, tableName].map(sqlIdentifier).join(".");
     const sql = `SUMMARIZE ${qualifiedName}`;
 
-    try {
-      const reader = await this.connection.runAndReadAll(sql);
-      const rows = reader.getRowObjectsJS() as Record<string, unknown>[];
-      return rows.map((row) => ({
-        name: row.column_name as string,
-        distinctCount: Number(row.approx_unique) || 0,
-        nullPercent: Number(row.null_percentage) || 0,
-        inferredType: row.column_type as string,
-      }));
-    } catch (e) {
-      console.error("SUMMARIZE table query failed:", e);
-      return [];
-    }
+    const reader = await this.connection.runAndReadAll(sql);
+    const rows = reader.getRowObjectsJS() as Record<string, unknown>[];
+    return rows.map((row) => ({
+      name: row.column_name as string,
+      distinctCount: Number(row.approx_unique) || 0,
+      nullPercent: Number(row.null_percentage) || 0,
+      inferredType: row.column_type as string,
+    }));
   }
 
   /**
@@ -1976,7 +1971,7 @@ export class DuckDBService {
       throw new Error("DuckDB connection not available");
     }
 
-    const qualifiedName = `"${database}"."${schema}"."${tableName}"`;
+    const qualifiedName = [database, schema, tableName].map(sqlIdentifier).join(".");
     const escapedCol = `"${column}"`;
 
     // Basic stats
@@ -2065,6 +2060,7 @@ export class DuckDBService {
    * we never throw from the shutdown path.
    */
   async close(): Promise<void> {
+    await this.catalog.close();
     try {
       await this.dropAllCaches();
     } catch (e) {
@@ -2079,7 +2075,14 @@ export class DuckDBService {
       }
       this.connection = null;
     }
-    this.instance = null;
+    if (this.instance) {
+      try {
+        this.instance.closeSync();
+      } catch (e) {
+        console.warn("🦆 instance close failed:", e);
+      }
+      this.instance = null;
+    }
 
     if (this.ownedTempDir) {
       try {

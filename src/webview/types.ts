@@ -87,7 +87,9 @@ export interface FileSourceMetadata extends BaseOverviewMetadata {
 /**
  * Metadata for a database table or view
  */
-export interface TableSourceMetadata extends BaseOverviewMetadata {
+export interface TableSourceMetadata extends Omit<BaseOverviewMetadata, "rowCount"> {
+  rowCount?: number;
+  rowCountIsEstimate?: boolean;
   sourceKind: "table";
   database: string;
   schema: string;

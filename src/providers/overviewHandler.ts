@@ -41,8 +41,11 @@ export interface WriteBackTarget {
  * Each provider implements this to plug into the shared handler.
  */
 export interface OverviewDataSource {
-  /** Fetch lightweight metadata (DESCRIBE + COUNT). */
+  /** Fetch schema and available row counts without profiling. */
   getMetadata(): Promise<DataOverviewMetadata>;
+
+  /** Exact row counts are optional and requested explicitly for tables/views. */
+  getRowCount?(): Promise<number>;
 
   /** Fetch column summaries (SUMMARIZE). */
   getSummaries(): Promise<
@@ -361,6 +364,18 @@ export function setupOverviewWebview(
         }
         break;
       }
+
+      case "requestRowCount":
+        try {
+          if (!source.getRowCount) {
+            break;
+          }
+          const count = await source.getRowCount();
+          panel.webview.postMessage({ type: "rowCount", count });
+        } catch (error) {
+          panel.webview.postMessage({ type: "rowCount", error: String(error) });
+        }
+        break;
 
       case "requestFileSummaries":
         try {

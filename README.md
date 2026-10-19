@@ -61,7 +61,9 @@ Performance Note: When you execute a query, the extension creates a temporary ta
 
 - **Manage databases** — Create, attach, and switch between databases
 - **Status bar selector** — Quick database switching
-- **Schema browser** — Databases → Schemas → Tables/Views → Columns
+- **Schema browser** — Databases → Schemas → Tables/Views → Columns, discovered without counting rows or profiling data
+- **Persistent catalog cache** — Discovered metadata for local DuckDB files survives restarts; use **Refresh Catalog** to force discovery
+- **On-demand statistics** — Table overviews offer **Profile table** and **Calculate exact count**; `~` marks estimated row counts
 - **Quick actions** — Select Top Rows, DESCRIBE, SUMMARIZE, View Definition, Drop Table
 
 ### Inline Peek Results
@@ -271,6 +273,20 @@ Leave empty to use the OS temp directory, which is automatically cleaned up on r
 ```
 
 ### Database Explorer
+
+#### `duckdb.catalog.persist`
+
+Cache discovered schemas, tables, views, and columns for local DuckDB files across restarts (default: `true`). Snapshots live in VS Code's workspace storage, not your project or database. Temporary objects, in-memory databases, remote catalogs, table data, view SQL, and statistics are not persisted. Disable this setting to remove the workspace's stored snapshots and use memory-only caching.
+
+Restored metadata is checked against the database and WAL file timestamps and sizes, then validated against the live catalog in the background. The database shows **cached · validating** during validation. File checks are best effort; use **Refresh Catalog** in the Databases toolbar to bypass all cached metadata. Schema changes executed through the extension invalidate the cache automatically; live metadata is also revalidated after 30 seconds when accessed, including when VS Code regains focus.
+
+Discovery never counts rows or runs `SUMMARIZE`. Native table row estimates appear with `~`; views have no count until requested. Open a table/view overview and choose **Calculate exact count** or **Profile table**, or use the existing **Summarize** context action. Column nodes show types without automatically profiling the table.
+
+#### `duckdb.catalog.maxCacheSizeMB`
+
+Maximum total size of persistent snapshots per workspace in MiB (default: `16`, range: 1–256). Oldest snapshots are evicted first. An oversized catalog still supports live discovery and memory caching.
+
+See [catalog performance testing](docs/catalog-performance.md) for the benchmark workflow.
 
 #### `duckdb.explorer.defaultRowLimit`
 

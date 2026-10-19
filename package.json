@@ -102,7 +102,7 @@
       },
       {
         "command": "duckdb.explorer.refresh",
-        "title": "Refresh",
+        "title": "Refresh Catalog",
         "icon": "$(refresh)"
       },
       {
@@ -304,6 +304,11 @@
         }
       ],
       "view/item/context": [
+        {
+          "command": "duckdb.explorer.refresh",
+          "when": "view == duckdb.databaseExplorer && viewItem =~ /^database-attached/",
+          "group": "0_db@4"
+        },
         {
           "command": "duckdb.explorer.useDatabase",
           "when": "view == duckdb.databaseExplorer && viewItem =~ /^database-attached/",
@@ -761,6 +766,18 @@
           "default": true,
           "description": "Enable SQL autocomplete suggestions"
         },
+        "duckdb.catalog.persist": {
+          "type": "boolean",
+          "default": true,
+          "description": "Cache discovered metadata for local DuckDB files in VS Code workspace storage across restarts. Temporary objects, in-memory databases, remote catalogs, and table statistics are not persisted."
+        },
+        "duckdb.catalog.maxCacheSizeMB": {
+          "type": "integer",
+          "default": 16,
+          "minimum": 1,
+          "maximum": 256,
+          "description": "Maximum total size in MiB of persistent catalog snapshots per workspace. Older snapshots are evicted first."
+        },
         "duckdb.explorer.defaultRowLimit": {
           "type": "number",
           "default": 1000,
@@ -934,6 +951,7 @@
     "lint": "eslint src",
     "test": "vscode-test",
     "test:unit": "node --import tsx --test ./src/test/*.test.ts",
+    "benchmark:catalog": "tsx scripts/benchmark-catalog.ts",
     "deploy": "vsce publish"
   },
   "devDependencies": {

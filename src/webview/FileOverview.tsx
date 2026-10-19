@@ -55,7 +55,14 @@ interface FileOverviewProps {
 }
 
 export function FileOverview({ metadata, onBackToContainer }: FileOverviewProps) {
-  const { displayName, rowCount, columns } = metadata;
+  const { displayName, columns } = metadata;
+  const [exactRowCount, setExactRowCount] = useState<number>();
+  const [countLoading, setCountLoading] = useState(false);
+  const [countError, setCountError] = useState<string | null>(null);
+  const rowCount = exactRowCount ?? metadata.rowCount;
+  const estimated = metadata.sourceKind === 'table' && metadata.rowCountIsEstimate && exactRowCount === undefined;
+  const rowCountLabel = rowCount === undefined ? 'Row count unknown' : `${estimated ? '~' : ''}${rowCount.toLocaleString()} rows`;
+  const allRowsLabel = rowCount === undefined ? 'All Rows' : `All Rows (${estimated ? '~' : ''}${formatCount(rowCount)})`;
   const isFile = metadata.sourceKind === 'file';
   const isTable = metadata.sourceKind === 'table';
 
@@ -68,9 +75,10 @@ export function FileOverview({ metadata, onBackToContainer }: FileOverviewProps)
   const [filterText, setFilterText] = useState('');
   const [hideNullColumns, setHideNullColumns] = useState(false);
 
-  // Summaries (auto-loaded from SUMMARIZE)
+  // Table profiling is explicit; retain automatic summaries for data files.
   const [summaries, setSummaries] = useState<ColumnSummary[]>([]);
-  const [summariesLoading, setSummariesLoading] = useState(true);
+  const [summariesLoading, setSummariesLoading] = useState(metadata.sourceKind === 'file');
+  const [summariesError, setSummariesError] = useState<string | null>(null);
 
   // Parquet key-value metadata
   const kvMetadata = (metadata.sourceKind === 'file' && metadata.kvMetadata) || [];
@@ -82,11 +90,11 @@ export function FileOverview({ metadata, onBackToContainer }: FileOverviewProps)
   const [loadingStatsColumn, setLoadingStatsColumn] = useState<string | null>(null);
   const [statsError, setStatsError] = useState<string | null>(null);
 
-  // Auto-request summaries on mount
   useEffect(() => {
-    const vscode = getVscodeApi();
-    vscode.postMessage({ type: 'requestFileSummaries' });
-  }, []);
+    if (metadata.sourceKind === 'file') {
+      getVscodeApi().postMessage({ type: 'requestFileSummaries' });
+    }
+  }, [metadata.sourceKind]);
 
   // Listen for summary and stats responses
   useEffect(() => {
@@ -95,6 +103,11 @@ export function FileOverview({ metadata, onBackToContainer }: FileOverviewProps)
       if (message.type === 'fileSummaries') {
         setSummaries(message.data || []);
         setSummariesLoading(false);
+        setSummariesError(message.error || null);
+      } else if (message.type === 'rowCount') {
+        if (typeof message.count === 'number') setExactRowCount(message.count);
+        setCountError(message.error || null);
+        setCountLoading(false);
       } else if (message.type === 'fileColumnStats') {
         if (message.data) {
           setColumnStatsMap(prev => ({
@@ -159,7 +172,7 @@ export function FileOverview({ metadata, onBackToContainer }: FileOverviewProps)
 
   // Only show top-N options where row count exceeds the threshold
   const visibleTopOptions = useMemo(
-    () => SELECT_TOP_OPTIONS.filter(opt => rowCount >= opt.value),
+    () => SELECT_TOP_OPTIONS.filter(opt => rowCount === undefined || rowCount >= opt.value),
     [rowCount]
   );
   const defaultOption = visibleTopOptions.length > 0
@@ -300,7 +313,7 @@ export function FileOverview({ metadata, onBackToContainer }: FileOverviewProps)
             </>
           )}
           <span className="file-overview-stat">
-            {rowCount.toLocaleString()} rows
+            {rowCountLabel}
           </span>
           <span className="file-overview-stat-sep">·</span>
           <span className="file-overview-stat">
@@ -413,7 +426,7 @@ export function FileOverview({ metadata, onBackToContainer }: FileOverviewProps)
                       className="file-overview-dropdown-item file-overview-dropdown-item-all"
                       onClick={() => handleQueryFile()}
                     >
-                      All Rows ({formatCount(rowCount)})
+                      {allRowsLabel}
                     </button>
                   </div>
                 )}
@@ -423,10 +436,10 @@ export function FileOverview({ metadata, onBackToContainer }: FileOverviewProps)
                 className="btn btn-primary"
                 onClick={() => handleQueryFile()}
                 disabled={noneSelected}
-                title={noneSelected ? 'Select at least one column' : `Select all ${rowCount.toLocaleString()} rows`}
+                title={noneSelected ? 'Select at least one column' : 'Select all rows'}
               >
                 <Play size={12} />
-                Select All ({formatCount(rowCount)})
+                {allRowsLabel}
               </button>
             )}
           </div>
@@ -455,6 +468,36 @@ export function FileOverview({ metadata, onBackToContainer }: FileOverviewProps)
           onOpenInEditor={handleOpenAsSql}
           title="SQL Preview"
         />
+      )}
+
+      {isTable && (
+        <div className="file-overview-actions">
+          <button
+            className="btn btn-secondary"
+            disabled={summariesLoading}
+            title="Scan the table to calculate column statistics"
+            onClick={() => {
+              setSummariesLoading(true);
+              setSummariesError(null);
+              getVscodeApi().postMessage({ type: 'requestFileSummaries' });
+            }}
+          >
+            {summariesLoading ? 'Profiling…' : 'Profile table'}
+          </button>
+          <button
+            className="btn btn-secondary"
+            disabled={countLoading}
+            title="Count all rows; views may execute an expensive query"
+            onClick={() => {
+              setCountLoading(true);
+              setCountError(null);
+              getVscodeApi().postMessage({ type: 'requestRowCount' });
+            }}
+          >
+            {countLoading ? 'Counting…' : 'Calculate exact count'}
+          </button>
+          {(countError || summariesError) && <span role="alert">{countError || summariesError}</span>}
+        </div>
       )}
 
       {/* Column search — reuses ColumnsPanel search styling */}

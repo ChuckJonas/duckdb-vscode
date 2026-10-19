@@ -49,8 +49,12 @@ const webviewConfig = {
  * These are compiled separately from unit tests (which use node:test)
  */
 const integrationTestConfig = {
-  entryPoints: ["src/test/integration/extension.test.ts"],
-  bundle: false,
+  entryPoints: [
+    "src/test/integration/extension.test.ts",
+    "src/test/integration/catalog.test.ts",
+  ],
+  bundle: true,
+  external: ["vscode", "@duckdb/node-api"],
   format: "cjs",
   sourcemap: true,
   platform: "node",

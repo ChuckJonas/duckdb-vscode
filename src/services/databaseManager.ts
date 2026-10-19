@@ -4,6 +4,11 @@
  */
 
 import * as vscode from "vscode";
+import {
+  discoverSchemas,
+  discoverTables,
+  type CatalogService,
+} from "./catalogService";
 
 export interface DatabaseInfo {
   name: string;
@@ -91,73 +96,27 @@ export async function addIgnoredSchema(schemaName: string): Promise<void> {
  */
 export async function getSchemas(
   queryFn: QueryFn,
-  database: string
+  database: string,
+  catalog?: CatalogService
 ): Promise<SchemaInfo[]> {
-  // Merge hardcoded exclusions with user-configured ignored schemas
-  const alwaysExcluded = ["pg_catalog", "information_schema"];
-  const userIgnored = getIgnoredSchemas();
-  const allExcluded = [...new Set([...alwaysExcluded, ...userIgnored])];
-  const excludeList = allExcluded.map((s) => `'${s}'`).join(", ");
-
-  const result = await queryFn(`
-    SELECT DISTINCT schema_name
-    FROM information_schema.schemata
-    WHERE catalog_name = '${database}'
-      AND schema_name NOT IN (${excludeList})
-    ORDER BY schema_name
-  `);
-
-  return result.rows.map((row) => ({
-    database,
-    name: row.schema_name as string,
-  }));
+  const ignored = new Set(getIgnoredSchemas());
+  const schemas = catalog
+    ? await catalog.getSchemas(database)
+    : await discoverSchemas(async (sql) => (await queryFn(sql)).rows, database);
+  return schemas.filter((schema) => !ignored.has(schema.name));
 }
 
-/**
- * Get tables in a schema with row counts
- */
+/** Get tables and views without counting rows or evaluating views. */
 export async function getTables(
   queryFn: QueryFn,
   database: string,
-  schema: string
+  schema: string,
+  catalog?: CatalogService
 ): Promise<TableInfo[]> {
-  // Get tables first
-  const result = await queryFn(`
-    SELECT 
-      table_name,
-      table_type
-    FROM information_schema.tables
-    WHERE table_catalog = '${database}'
-      AND table_schema = '${schema}'
-      AND table_type IN ('BASE TABLE', 'VIEW')
-    ORDER BY table_type, table_name
-  `);
-
-  // Get row counts for each table (can't do correlated subquery in the above)
-  const tables: TableInfo[] = [];
-  for (const row of result.rows) {
-    const tableName = row.table_name as string;
-    const tableType = row.table_type as string;
-
-    let rowCount: number | undefined;
-    try {
-      const countResult = await queryFn(
-        `SELECT COUNT(*) as cnt FROM "${database}"."${schema}"."${tableName}"`
-      );
-      rowCount = countResult.rows[0]?.cnt as number;
-    } catch {
-      // Ignore count errors (e.g., for views that might fail)
-    }
-
-    tables.push({
-      database,
-      schema,
-      name: tableName,
-      type: (tableType === "VIEW" ? "view" : "table") as "table" | "view",
-      rowCount,
-    });
-  }
-
+  const tables = catalog
+    ? await catalog.getTables(database, schema)
+    : (await discoverTables(async (sql) => (await queryFn(sql)).rows, database))
+        .filter((table) => table.schema === schema);
   return tables;
 }
 

@@ -77,7 +77,10 @@ import {
   getTables,
   getAttachedDatabases,
 } from "./services/databaseManager";
-import { getAutocompleteSuggestions } from "./services/autocompleteService";
+import {
+  getAutocompleteSuggestions,
+  clearColumnCache,
+} from "./services/autocompleteService";
 import {
   installAndLoadExtension,
   isExtensionLoaded,
@@ -263,6 +266,23 @@ export async function activate(context: vscode.ExtensionContext) {
 
   // Initialize DuckDB on activation
   const db = getDuckDBService();
+  const configureCatalog = () => {
+    const config = vscode.workspace.getConfiguration("duckdb");
+    db.catalog.configure({
+      storagePath: context.storageUri
+        ? vscode.Uri.joinPath(context.storageUri, "catalog").fsPath
+        : undefined,
+      persist: config.get<boolean>("catalog.persist", true),
+      maxBytes: config.get<number>("catalog.maxCacheSizeMB", 16) * 1024 * 1024,
+      onDidChange: () => {
+        clearColumnCache();
+        databaseExplorer?.refresh();
+      },
+      onError: (error) => console.error("🦆 Catalog cache:", error),
+    });
+  };
+  let databaseExplorer: DatabaseExplorer;
+  configureCatalog();
   try {
     const duckdbConfig = vscode.workspace.getConfiguration("duckdb");
     const memoryLimit = duckdbConfig.get<string>("memoryLimit", "1.5GB");
@@ -1523,7 +1543,8 @@ export async function activate(context: vscode.ExtensionContext) {
             fullText,
             cursorPosition,
             listFilesForAutocomplete,
-            skipRemote
+            skipRemote,
+            db.catalog
           );
 
           return suggestions.map(
@@ -1599,15 +1620,34 @@ export async function activate(context: vscode.ExtensionContext) {
   // Database Explorer
   // ============================================
 
-  const databaseExplorer = new DatabaseExplorer(async (sql: string) => {
-    const rows = await db.query(sql);
-    return { rows };
-  });
+  databaseExplorer = new DatabaseExplorer(
+    async (sql: string) => {
+      const rows = await db.query(sql);
+      return { rows };
+    },
+    db.catalog
+  );
 
   const treeView = vscode.window.createTreeView("duckdb.databaseExplorer", {
     treeDataProvider: databaseExplorer,
     showCollapseAll: true,
   });
+
+  context.subscriptions.push(
+    vscode.window.onDidChangeWindowState((state) => {
+      if (state.focused) {
+        databaseExplorer.refresh();
+      }
+    }),
+    vscode.workspace.onDidChangeConfiguration((event) => {
+      if (event.affectsConfiguration("duckdb.catalog")) {
+        configureCatalog();
+      }
+      if (event.affectsConfiguration("duckdb.explorer.ignoredSchemas")) {
+        databaseExplorer.refresh();
+      }
+    })
+  );
 
   // Kick off auto-attach in the background. Each attach runs on its own
   // connection with a timeout, so a stuck remote ATTACH (e.g. Postgres
@@ -1622,8 +1662,8 @@ export async function activate(context: vscode.ExtensionContext) {
 
   const explorerRefreshCmd = vscode.commands.registerCommand(
     "duckdb.explorer.refresh",
-    () => {
-      databaseExplorer.refresh();
+    (node?: ExplorerNode) => {
+      db.catalog.refresh(node?.type === "database" ? node.name : undefined);
     }
   );
 
@@ -1941,9 +1981,9 @@ export async function activate(context: vscode.ExtensionContext) {
           if (database.isInternal) {
             continue;
           }
-          const schemas = await getSchemas(queryFn, database.name);
+          const schemas = await getSchemas(queryFn, database.name, db.catalog);
           for (const schema of schemas) {
-            const tables = await getTables(queryFn, database.name, schema.name);
+            const tables = await getTables(queryFn, database.name, schema.name, db.catalog);
             for (const table of tables) {
               const icon = table.type === "view" ? "$(eye)" : "$(table)";
               items.push({
@@ -1951,7 +1991,7 @@ export async function activate(context: vscode.ExtensionContext) {
                 description: `${database.name}.${schema.name}`,
                 detail:
                   table.rowCount !== undefined
-                    ? `${table.type} — ${table.rowCount.toLocaleString()} rows`
+                    ? `${table.type} — ~${table.rowCount.toLocaleString()} rows`
                     : table.type,
                 database: database.name,
                 schema: schema.name,

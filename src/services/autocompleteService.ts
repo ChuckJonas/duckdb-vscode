@@ -8,6 +8,8 @@
  * 4. Providing context-aware function and keyword completions
  */
 
+import { sqlString, type CatalogService } from "./catalogService";
+
 import {
   analyzeSQLContext,
   type SQLContext,
@@ -74,7 +76,8 @@ export async function getAutocompleteSuggestions(
   fullText: string,
   cursorPosition: number,
   listFiles?: ListFilesFn,
-  skipRemoteDescribe?: boolean
+  skipRemoteDescribe?: boolean,
+  catalog?: CatalogService
 ): Promise<AutocompleteSuggestion[]> {
   // Skip if empty or just whitespace
   if (!fullText.trim()) {
@@ -95,7 +98,8 @@ export async function getAutocompleteSuggestions(
         queryFn,
         context,
         cursorPosition,
-        skipRemoteDescribe
+        skipRemoteDescribe,
+        catalog
       );
       suggestions.push(...columnSuggestions);
     }
@@ -106,7 +110,8 @@ export async function getAutocompleteSuggestions(
         queryFn,
         context,
         cursorPosition,
-        listFiles
+        listFiles,
+        catalog
       );
       suggestions.push(...tableSuggestions);
     }
@@ -164,7 +169,8 @@ async function getColumnCompletions(
   queryFn: (sql: string) => Promise<Record<string, unknown>[]>,
   context: SQLContext,
   cursorPosition: number,
-  skipRemoteDescribe?: boolean
+  skipRemoteDescribe?: boolean,
+  catalog?: CatalogService
 ): Promise<AutocompleteSuggestion[]> {
   const suggestions: AutocompleteSuggestion[] = [];
 
@@ -175,7 +181,8 @@ async function getColumnCompletions(
       const columns = await getColumnsForTable(
         queryFn,
         table,
-        skipRemoteDescribe
+        skipRemoteDescribe,
+        catalog
       );
       for (const col of columns) {
         suggestions.push({
@@ -194,7 +201,8 @@ async function getColumnCompletions(
     const columns = await getColumnsForTable(
       queryFn,
       table,
-      skipRemoteDescribe
+      skipRemoteDescribe,
+      catalog
     );
     const prefix = table.alias || table.name;
 
@@ -261,8 +269,16 @@ const REMOTE_SOURCE_RE =
 async function getColumnsForTable(
   queryFn: (sql: string) => Promise<Record<string, unknown>[]>,
   table: TableReference,
-  skipRemoteDescribe?: boolean
+  skipRemoteDescribe?: boolean,
+  catalog?: CatalogService
 ): Promise<ColumnInfo[]> {
+  // Fully qualified names have unambiguous binding. Preserve DESCRIBE for
+  // unqualified names, files and expressions so search_path/temporary objects work.
+  if (catalog && table.type === "table" && /^[a-zA-Z_]\w*\.[a-zA-Z_]\w*\.[a-zA-Z_]\w*$/.test(table.name)) {
+    const [database, schema, name] = table.name.split(".");
+    return catalog.getColumns(database, schema, name);
+  }
+
   // For subqueries, use the subquery text as cache key
   const cacheKey =
     table.type === "subquery" && table.subquery
@@ -376,6 +392,53 @@ function parseQualifiedPrefix(prefix: string): {
   }
 }
 
+async function getCompletionDatabases(query: (sql: string) => Promise<Record<string, unknown>[]>, catalog?: CatalogService) {
+  if (catalog) {
+    return (await catalog.getDatabases()).map((db) => ({ database_name: db.name }));
+  }
+  return query("SELECT database_name FROM duckdb_databases() WHERE database_name != 'system' ORDER BY database_name");
+}
+
+async function getCompletionTables(
+  query: (sql: string) => Promise<Record<string, unknown>[]>, catalog?: CatalogService,
+  database?: string, schema?: string, limit = 100
+): Promise<Record<string, unknown>[]> {
+  if (catalog) {
+    if (database && !(await catalog.getDatabases()).some((db) => db.name === database)) {
+      return [];
+    }
+    const tables = database ? await catalog.getTables(database, schema) : await catalog.getAllTables();
+    return tables.filter((table) => schema === undefined || table.schema === schema)
+      .sort((a, b) => a.name.localeCompare(b.name)).slice(0, limit)
+      .map((table) => ({ table_name: table.name, table_type: table.type === "view" ? "VIEW" : "BASE TABLE" }));
+  }
+  return query(`SELECT table_name, table_type FROM information_schema.tables
+    WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
+      AND NOT starts_with(table_name, '_cache_')
+      ${database ? `AND table_catalog = ${sqlString(database)}` : ""}
+      ${schema ? `AND table_schema = ${sqlString(schema)}` : ""}
+    ORDER BY table_name LIMIT ${limit}`);
+}
+
+async function getCompletionSchemas(
+  query: (sql: string) => Promise<Record<string, unknown>[]>, catalog?: CatalogService,
+  database?: string, excludeMain = false
+): Promise<Record<string, unknown>[]> {
+  if (catalog) {
+    if (database && !(await catalog.getDatabases()).some((db) => db.name === database)) {
+      return [];
+    }
+    const schemas = database ? await catalog.getSchemas(database) : await catalog.getAllSchemas();
+    return [...new Set(schemas.map((schema) => schema.name))]
+      .filter((name) => !excludeMain || name !== "main").sort().slice(0, 50)
+      .map((name) => ({ schema_name: name }));
+  }
+  return query(`SELECT DISTINCT schema_name FROM information_schema.schemata
+    WHERE schema_name NOT IN ('pg_catalog', 'information_schema'${excludeMain ? ", 'main'" : ""})
+      ${database ? `AND catalog_name = ${sqlString(database)}` : ""}
+    ORDER BY schema_name LIMIT 50`);
+}
+
 /**
  * Get table completions from information_schema and file paths
  */
@@ -383,7 +446,8 @@ async function getTableCompletions(
   queryFn: (sql: string) => Promise<Record<string, unknown>[]>,
   context: SQLContext,
   cursorPosition: number,
-  listFiles?: ListFilesFn
+  listFiles?: ListFilesFn,
+  catalog?: CatalogService
 ): Promise<AutocompleteSuggestion[]> {
   const suggestions: AutocompleteSuggestion[] = [];
 
@@ -395,12 +459,7 @@ async function getTableCompletions(
 
     try {
       // Suggest database names (without trailing dots - we're inside quotes)
-      const dbRows = await queryFn(`
-        SELECT database_name
-        FROM duckdb_databases()
-        WHERE database_name != 'system'
-        ORDER BY database_name
-      `);
+      const dbRows = await getCompletionDatabases(queryFn, catalog);
 
       for (const row of dbRows) {
         const dbName = row.database_name as string;
@@ -415,14 +474,7 @@ async function getTableCompletions(
       }
 
       // Suggest table names
-      const tableRows = await queryFn(`
-        SELECT table_name, table_type
-        FROM information_schema.tables
-        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-          AND NOT starts_with(table_name, '_cache_')
-        ORDER BY table_name
-        LIMIT 100
-      `);
+      const tableRows = await getCompletionTables(queryFn, catalog, undefined, undefined, 100);
 
       for (const row of tableRows) {
         const tableName = row.table_name as string;
@@ -438,13 +490,7 @@ async function getTableCompletions(
       }
 
       // Suggest schema names
-      const schemaRows = await queryFn(`
-        SELECT DISTINCT schema_name
-        FROM information_schema.schemata
-        WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'main')
-        ORDER BY schema_name
-        LIMIT 50
-      `);
+      const schemaRows = await getCompletionSchemas(queryFn, catalog, undefined, true);
 
       for (const row of schemaRows) {
         const schemaName = row.schema_name as string;
@@ -479,14 +525,7 @@ async function getTableCompletions(
 
     // Also include table names (DuckDB allows 'table_name' syntax too)
     try {
-      const rows = await queryFn(`
-        SELECT table_name
-        FROM information_schema.tables
-        WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-          AND NOT starts_with(table_name, '_cache_')
-        ORDER BY table_name
-        LIMIT 50
-      `);
+      const rows = await getCompletionTables(queryFn, catalog, undefined, undefined, 50);
 
       for (const row of rows) {
         const tableName = row.table_name as string;
@@ -525,15 +564,7 @@ async function getTableCompletions(
     try {
       if (qualified.schema) {
         // db.schema.table - show only tables from specific schema (no more qualifiers)
-        const tableRows = await queryFn(`
-          SELECT table_name, table_type
-          FROM information_schema.tables
-          WHERE table_catalog = '${qualified.database}'
-            AND table_schema = '${qualified.schema}'
-            AND NOT starts_with(table_name, '_cache_')
-          ORDER BY table_name
-          LIMIT 100
-        `);
+        const tableRows = await getCompletionTables(queryFn, catalog, qualified.database, qualified.schema, 100);
 
         for (const row of tableRows) {
           const tableName = row.table_name as string;
@@ -556,14 +587,7 @@ async function getTableCompletions(
         // Try BOTH interpretations and merge results
 
         // 1. Try as database: get schemas and tables from that database
-        const dbSchemaRows = await queryFn(`
-          SELECT DISTINCT schema_name
-          FROM information_schema.schemata
-          WHERE catalog_name = '${qualified.database}'
-            AND schema_name NOT IN ('pg_catalog', 'information_schema')
-          ORDER BY schema_name
-          LIMIT 50
-        `);
+        const dbSchemaRows = await getCompletionSchemas(queryFn, catalog, qualified.database, false);
 
         for (const row of dbSchemaRows) {
           const schemaName = row.schema_name as string;
@@ -585,15 +609,7 @@ async function getTableCompletions(
         }
 
         // Get tables from database (treating qualifier as database name)
-        const dbTableRows = await queryFn(`
-          SELECT table_name, table_type
-          FROM information_schema.tables
-          WHERE table_catalog = '${qualified.database}'
-            AND table_schema NOT IN ('pg_catalog', 'information_schema')
-            AND NOT starts_with(table_name, '_cache_')
-          ORDER BY table_name
-          LIMIT 100
-        `);
+        const dbTableRows = await getCompletionTables(queryFn, catalog, qualified.database, undefined, 100);
 
         for (const row of dbTableRows) {
           const tableName = row.table_name as string;
@@ -613,15 +629,7 @@ async function getTableCompletions(
         }
 
         // 2. Also try as schema in current database
-        const schemaTableRows = await queryFn(`
-          SELECT table_name, table_type
-          FROM information_schema.tables
-          WHERE table_schema = '${qualified.database}'
-            AND table_schema NOT IN ('pg_catalog', 'information_schema')
-            AND NOT starts_with(table_name, '_cache_')
-          ORDER BY table_name
-          LIMIT 100
-        `);
+        const schemaTableRows = await getCompletionTables(queryFn, catalog, undefined, qualified.database, 100);
 
         for (const row of schemaTableRows) {
           const tableName = row.table_name as string;
@@ -656,12 +664,7 @@ async function getTableCompletions(
   // No qualifier - show databases, schemas, and tables from current context
   try {
     // Get attached databases
-    const dbRows = await queryFn(`
-      SELECT database_name
-      FROM duckdb_databases()
-      WHERE database_name != 'system'
-      ORDER BY database_name
-    `);
+    const dbRows = await getCompletionDatabases(queryFn, catalog);
 
     for (const row of dbRows) {
       const dbName = row.database_name as string;
@@ -679,13 +682,7 @@ async function getTableCompletions(
     }
 
     // Get schemas in the current database (excluding system schemas)
-    const schemaRows = await queryFn(`
-      SELECT DISTINCT schema_name
-      FROM information_schema.schemata
-      WHERE schema_name NOT IN ('pg_catalog', 'information_schema', 'main')
-      ORDER BY schema_name
-      LIMIT 50
-    `);
+    const schemaRows = await getCompletionSchemas(queryFn, catalog, undefined, true);
 
     for (const row of schemaRows) {
       const schemaName = row.schema_name as string;
@@ -703,14 +700,7 @@ async function getTableCompletions(
     }
 
     // Get tables from current schema
-    const tableRows = await queryFn(`
-      SELECT table_name, table_type
-      FROM information_schema.tables
-      WHERE table_schema NOT IN ('pg_catalog', 'information_schema')
-        AND NOT starts_with(table_name, '_cache_')
-      ORDER BY table_name
-      LIMIT 100
-    `);
+    const tableRows = await getCompletionTables(queryFn, catalog, undefined, undefined, 100);
 
     for (const row of tableRows) {
       const tableName = row.table_name as string;

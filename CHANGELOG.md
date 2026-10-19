@@ -6,6 +6,16 @@ Check [Keep a Changelog](http://keepachangelog.com/) for recommendations on how 
 
 ## Unreleased
 
+## [Unreleased]
+
+### Added
+- Persist discovered metadata for local DuckDB files in VS Code workspace storage, with `duckdb.catalog.persist`, a bounded cache, and **Refresh Catalog** to force discovery.
+- Add explicit **Profile table** and **Calculate exact count** actions to table/view overviews. Estimated row counts are marked with `~`.
+
+### Fixed
+- Discover tables and views without sequential `COUNT(*)` queries or evaluating views. Share catalog metadata between the explorer, Find Table, and autocomplete, and load columns on demand.
+- Stop automatically scanning tables with `SUMMARIZE` when opening their overviews or expanding column nodes.
+
 ## [0.0.27] - 2026-05-31
 
 ### Changed

@@ -6,7 +6,7 @@ import {
   getCombinedDatabases,
   CombinedDatabaseInfo,
 } from "../services/databaseManager";
-import { buildSummarizeSql } from "../services/duckdb";
+import { type CatalogService } from "../services/catalogService";
 
 /**
  * Node types in the database explorer tree
@@ -19,8 +19,7 @@ export type ExplorerNodeType =
   | "views-folder"
   | "table"
   | "view"
-  | "column"
-  | "column-stat";
+  | "column";
 
 /**
  * Represents a node in the database explorer tree
@@ -40,7 +39,6 @@ export interface ExplorerNode {
   isConfigured?: boolean; // Is this database in workspace settings?
   dbPath?: string; // Path to database file
   engineType?: string; // DuckDB engine type: 'duckdb', 'postgres', 'sqlite', 'motherduck', etc.
-  statValue?: string; // Display value for column-stat nodes
 }
 
 /**
@@ -54,17 +52,11 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
 
   private currentDatabase: string = "memory";
 
-  // Cache summarize results per table to avoid re-running for each column
-  // Key: "database.schema.tableName"
-  private summarizeCache = new Map<
-    string,
-    Record<string, Record<string, unknown>>
-  >();
-
   constructor(
     private queryFn: (
       sql: string
-    ) => Promise<{ rows: Record<string, unknown>[] }>
+    ) => Promise<{ rows: Record<string, unknown>[] }>,
+    private readonly catalog: CatalogService
   ) {
     this.refreshCurrentDatabase();
   }
@@ -85,7 +77,6 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
    */
   refresh(): void {
     this.refreshCurrentDatabase();
-    this.summarizeCache.clear();
     this._onDidChangeTreeData.fire();
   }
 
@@ -195,14 +186,6 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
           element.name
         );
 
-      case "column":
-        return this.getColumnStatNodes(
-          element.database!,
-          element.schema!,
-          element.tableName!,
-          element.name
-        );
-
       default:
         return [];
     }
@@ -251,7 +234,7 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
    */
   private async getSchemaNodes(database: string): Promise<ExplorerNode[]> {
     try {
-      const schemas = await getSchemas(this.queryFn, database);
+      const schemas = await getSchemas(this.queryFn, database, this.catalog);
       return schemas.map((s) => ({
         type: "schema" as const,
         name: s.name,
@@ -272,7 +255,7 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
     type: "table" | "view"
   ): Promise<ExplorerNode[]> {
     try {
-      const tables = await getTables(this.queryFn, database, schema);
+      const tables = await getTables(this.queryFn, database, schema, this.catalog);
       return tables
         .filter((t) => t.type === type)
         .map((t) => ({
@@ -297,103 +280,18 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
     tableName: string
   ): Promise<ExplorerNode[]> {
     try {
-      const result = await this.queryFn(`
-        SELECT column_name, data_type, is_nullable
-        FROM information_schema.columns
-        WHERE table_catalog = '${database}'
-          AND table_schema = '${schema}'
-          AND table_name = '${tableName}'
-        ORDER BY ordinal_position
-      `);
-
-      return result.rows.map((row) => ({
+      const columns = await this.catalog.getColumns(database, schema, tableName);
+      return columns.map((column) => ({
         type: "column" as const,
-        name: row.column_name as string,
+        name: column.name,
         database,
         schema,
         tableName,
-        dataType: row.data_type as string,
-        isNullable: row.is_nullable === "YES",
+        dataType: column.type,
+        isNullable: column.isNullable,
       }));
     } catch (error) {
       console.error("🦆 Failed to get columns:", error);
-      return [];
-    }
-  }
-
-  /**
-   * Get summarize data for a table (cached per table)
-   */
-  private async getSummarizeData(
-    database: string,
-    schema: string,
-    tableName: string
-  ): Promise<Record<string, Record<string, unknown>>> {
-    const cacheKey = `${database}.${schema}.${tableName}`;
-    if (this.summarizeCache.has(cacheKey)) {
-      return this.summarizeCache.get(cacheKey)!;
-    }
-
-    const sql = buildSummarizeSql(database, schema, tableName);
-    const result = await this.queryFn(sql);
-
-    // Index by column_name for quick lookup
-    const byColumn: Record<string, Record<string, unknown>> = {};
-    for (const row of result.rows) {
-      const colName = row.column_name as string;
-      if (colName) {
-        byColumn[colName] = row;
-      }
-    }
-
-    this.summarizeCache.set(cacheKey, byColumn);
-    return byColumn;
-  }
-
-  /**
-   * Get stat nodes for a column (from SUMMARIZE)
-   */
-  private async getColumnStatNodes(
-    database: string,
-    schema: string,
-    tableName: string,
-    columnName: string
-  ): Promise<ExplorerNode[]> {
-    try {
-      const summarizeData = await this.getSummarizeData(
-        database,
-        schema,
-        tableName
-      );
-      const stats = summarizeData[columnName];
-      if (!stats) return [];
-
-      const statNodes: ExplorerNode[] = [];
-      const addStat = (label: string, value: unknown) => {
-        if (value !== null && value !== undefined && value !== "") {
-          statNodes.push({
-            type: "column-stat" as const,
-            name: label,
-            statValue: String(value),
-            database,
-            schema,
-            tableName,
-          });
-        }
-      };
-
-      addStat("Type", stats.column_type);
-      addStat("Min", stats.min);
-      addStat("Max", stats.max);
-      addStat("Unique", stats.approx_unique);
-      addStat(
-        "Nulls",
-        stats.null_percentage ? `${stats.null_percentage}%` : "0%"
-      );
-
-      return statNodes;
-    } catch (error) {
-      console.error("🦆 Failed to get column stats:", error);
       return [];
     }
   }
@@ -423,6 +321,9 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
    */
   private getDescription(element: ExplorerNode): string | undefined {
     if (element.type === "database") {
+      if (this.catalog.isValidating(element.name)) {
+        return "cached · validating";
+      }
       // Show engine type for non-duckdb databases (e.g. postgres, sqlite, motherduck)
       if (element.engineType && element.engineType !== "duckdb") {
         return element.engineType;
@@ -435,14 +336,11 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
     if (element.type === "column") {
       return element.dataType;
     }
-    if (element.type === "column-stat") {
-      return element.statValue;
-    }
     if (
       (element.type === "table" || element.type === "view") &&
       element.rowCount !== undefined
     ) {
-      return this.formatRowCount(element.rowCount);
+      return `~${this.formatRowCount(element.rowCount)}`;
     }
     return undefined;
   }
@@ -475,10 +373,8 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
       case "view":
         return vscode.TreeItemCollapsibleState.Collapsed;
       case "database-detached":
-      case "column-stat":
-        return vscode.TreeItemCollapsibleState.None;
       case "column":
-        return vscode.TreeItemCollapsibleState.Collapsed;
+        return vscode.TreeItemCollapsibleState.None;
     }
   }
 
@@ -538,8 +434,6 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
         return new vscode.ThemeIcon("eye");
       case "column":
         return new vscode.ThemeIcon("symbol-field");
-      case "column-stat":
-        return new vscode.ThemeIcon("info");
     }
   }
 
@@ -575,8 +469,6 @@ export class DatabaseExplorer implements vscode.TreeDataProvider<ExplorerNode> {
       case "column":
         const nullable = element.isNullable ? "NULL" : "NOT NULL";
         return `${element.dataType} ${nullable}`;
-      case "column-stat":
-        return `${element.name}: ${element.statValue}`;
       default:
         return element.name;
     }

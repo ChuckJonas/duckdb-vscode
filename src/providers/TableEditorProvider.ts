@@ -7,6 +7,7 @@
  * URI format: duckdb-table:///database/schema/tableName?view=true
  */
 import * as vscode from "vscode";
+import { sqlIdentifier } from "../services/catalogService";
 import { getDuckDBService } from "../services/duckdb";
 import {
   setupOverviewWebview,
@@ -112,7 +113,7 @@ export class TableEditorProvider
   ): Promise<void> {
     const { database, schema, tableName, isView } = parseTableUri(document.uri);
     const db = getDuckDBService();
-    const qualifiedName = `"${database}"."${schema}"."${tableName}"`;
+    const qualifiedName = [database, schema, tableName].map(sqlIdentifier).join(".");
 
     const source: OverviewDataSource = {
       async getMetadata(): Promise<DataOverviewMetadata> {
@@ -125,8 +126,13 @@ export class TableEditorProvider
           tableName,
           isView,
           rowCount: metadata.rowCount,
+          rowCountIsEstimate: metadata.rowCountIsEstimate,
           columns: metadata.columns,
         };
+      },
+
+      async getRowCount() {
+        return db.getTableRowCount(database, schema, tableName);
       },
 
       async getSummaries() {
